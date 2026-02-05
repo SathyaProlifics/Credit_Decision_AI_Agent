@@ -1,0 +1,73 @@
+# Environment variables and secrets
+.env
+.env.local
+.env.production
+secrets.json
+.aws/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/cache/
+
+# Docker
+docker-compose.override.yml
+
+# AWS
+.elasticbeanstalk/
+.eb/
+*.pem
+
+# Misc
+.cache/
+node_modules/
+dist/
+build/

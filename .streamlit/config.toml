@@ -1,0 +1,20 @@
+[theme]
+base = "dark"
+baseFontSize = 12
+primaryColor = "#35B8FF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#262730"
+textColor = "#FAFAFA"
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+headless = true
+port = 8501
+enableCORS = false
+enableXsrfProtection = true
+maxUploadSize = 200
+
+[logger]
+level = "info"

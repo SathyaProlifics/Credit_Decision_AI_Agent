@@ -1,0 +1,1072 @@
+# Credit Decision Agent - Technical Flow Documentation
+
+**Date**: February 5, 2026  
+**Project**: AI Agent Credit Decision System  
+**Framework**: Strands + AWS Bedrock + Anthropic Claude  
+**Status**: Production Ready
+
+---
+
+## Table of Contents
+
+1. [System Overview](#system-overview)
+2. [Architecture Diagram](#architecture-diagram)
+3. [Agent Framework & Components](#agent-framework--components)
+4. [The 4-Step AI Decision Pipeline](#the-4-step-ai-decision-pipeline)
+5. [Technical Implementation](#technical-implementation)
+6. [Database Integration](#database-integration)
+7. [UI Flow & User Interaction](#ui-flow--user-interaction)
+8. [Models Used & Cost Analysis](#models-used--cost-analysis)
+9. [Code References](#code-references)
+10. [Deployment Architecture](#deployment-architecture)
+
+---
+
+## System Overview
+
+Your application implements a **multi-agent AI credit decision system** that autonomously processes credit applications through 4 sequential AI-powered stages. The system uses Amazon Bedrock (AWS managed LLM service) with Anthropic Claude models orchestrated through the Strands framework.
+
+### Key Features
+
+✅ **Autonomous AI Decision Making**: Claude makes binding APPROVE/DENY/REFER decisions  
+✅ **Multi-Stage Pipeline**: 4 sequential AI analysis steps with embedding  
+✅ **Persistent Audit Trail**: All decisions logged to MySQL database  
+✅ **Real-time Progress Tracking**: UI polls database for live updates  
+✅ **Production-Grade**: Error handling, logging, background processing  
+✅ **Compliant**: Audit tool reviews entire flow for consistency  
+
+---
+
+## Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                      STREAMLIT WEB UI                           │
+│              (credit_decision_ui.py)                            │
+│                                                                 │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Sidebar Form:                                           │  │
+│  │  - Full Name, Age, Employment Status                     │  │
+│  │  - Annual Income, Credit Score, DTI Ratio               │  │
+│  │  - Existing Debts, Requested Credit Amount              │  │
+│  │  [🚀 Process Application Button]                          │  │
+│  └──────────────────────────────────────────────────────────┘  │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       │ Form Submission
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    MySQL Database                               │
+│            (sathya-database.cilmgugy4iud...)                    │
+│                                                                 │
+│  INSERT applicant record with status = PENDING               │
+│  Returns: application_id (primary key)                        │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       │ Returns application_id
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│              BACKGROUND THREAD (run_credit_decision)             │
+│                                                                 │
+│  1️⃣ FETCH APPLICATION from DB                                 │
+│     ├─ applicant_name, age, income, credit_score              │
+│     ├─ dti_ratio, existing_debts, requested_credit            │
+│     └─ status: PROCESSING                                      │
+│                                                                 │
+│  2️⃣ CALL AI TOOL #1: collect_data_tool                        │
+│     ├─ Model: Claude-3-Haiku (cost-optimized)                 │
+│     ├─ Input: Applicant demographics                           │
+│     └─ Output: {data_completeness_score, risk_indicators}     │
+│     └─ PERSIST: update agent_output with Step 1 result        │
+│                                                                 │
+│  3️⃣ CALL AI TOOL #2: assess_risk_tool                         │
+│     ├─ Model: Claude-3-Sonnet (stronger model)                │
+│     ├─ Input: Applicant + Step 1 output (CHAINED)            │
+│     └─ Output: {risk_score (1-100), recommendations}          │
+│     └─ PERSIST: update agent_output with Step 2 result        │
+│                                                                 │
+│  4️⃣ CALL AI TOOL #3: make_decision_tool                       │
+│     ├─ Model: Claude-3-Sonnet                                 │
+│     ├─ Input: Applicant + Step 2 output (CHAINED)            │
+│     ├─ Decision: APPROVE / DENY / REFER                       │
+│     └─ Output: {decision, credit_limit, interest_rate, ...}   │
+│     └─ PERSIST: update agent_output with Step 3 result        │
+│                                                                 │
+│  5️⃣ CALL AI TOOL #4: audit_decision_tool                      │
+│     ├─ Model: Claude-3-Sonnet                                 │
+│     ├─ Input: ALL previous outputs (full review)              │
+│     └─ Output: {audit_score, compliance_issues, ...}          │
+│     └─ PERSIST: Complete agent_output + FINAL STATUS          │
+│                                                                 │
+│  6️⃣ UPDATE DATABASE                                            │
+│     ├─ status: APPROVED / DENIED / REFER                      │
+│     ├─ agent_output: Complete JSON from all steps            │
+│     └─ confidence: Final decision confidence (1-100)          │
+└──────────────────────┬──────────────────────────────────────────┘
+                       │
+                       │ Database Updated
+                       ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                    STREAMLIT UI POLLING                          │
+│                                                                 │
+│  - Polls every 2 seconds: get_application(app_id)             │
+│  - When agent_output is populated, display results            │
+│  - Shows 6 tabs:                                               │
+│    1. Data Collection (Step 1 output)                          │
+│    2. Risk Assessment (Step 2 output)                          │
+│    3. Final Decision (Step 3 output)                           │
+│    4. Audit Report (Step 4 output)                             │
+│    5. Progress (live update messages)                          │
+│    6. Full Report (complete JSON + timestamps)                 │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Agent Framework & Components
+
+### Framework: Strands + AWS Bedrock
+
+```python
+# CreditDecisionAgent.py - Core Agent Setup
+
+from strands import tool, Agent
+from strands.models import BedrockModel
+import boto3
+
+def make_agent() -> Agent:
+    """Construct multi-tool agent for credit decisions."""
+    region = boto3.session.Session().region_name or "us-east-1"
+    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+    
+    agent = Agent(
+        model=BedrockModel(model_id=model_id),
+        system_prompt="You are an autonomous credit decision assistant. "
+                     "Use the provided tools to process credit applications.",
+        tools=[
+            collect_data_tool,      # @tool #1
+            assess_risk_tool,       # @tool #2
+            make_decision_tool,     # @tool #3
+            audit_decision_tool,    # @tool #4
+            # Database tools available to agent
+            get_application,
+            insert_application,
+            update_application_status,
+            update_application_agent_output,
+            run_credit_decision,    # Orchestrator
+        ],
+    )
+    return agent
+```
+
+### What is Strands?
+
+**Strands** is Amazon's agent orchestration library for tool-calling LLMs:
+- Watches for function calls in LLM responses
+- Automatically executes matching `@tool` decorated functions
+- Passes results back to LLM for next step
+- Handles error recovery and retry logic
+- Built specifically for AWS Bedrock
+
+### What is BedrockModel?
+
+**BedrockModel** wraps AWS Bedrock's inference API:
+- Abstracts Claude model API calls
+- Handles authentication via AWS credentials
+- Supports multi-region routing
+- Provides consistent interface across models (Claude 3 variants)
+
+---
+
+## The 4-Step AI Decision Pipeline
+
+### **Step 1️⃣: Data Collection Tool**
+
+**File**: [CreditDecisionAgent.py](CreditDecisionAgent.py#L52-L120)
+
+```python
+@tool
+def collect_data_tool(applicant: Dict[str, Any]) -> str:
+    """Collect and analyze applicant data. Returns JSON string."""
+    model_id = "anthropic.claude-3-haiku-20240307-v1:0"  # Cheaper model
+    
+    prompt = f"""As a credit data collection specialist, analyze the 
+    following applicant information and provide a comprehensive credit 
+    profile in JSON:
+    
+    Applicant Data:
+    - Name: {name}
+    - Age: {age}
+    - Annual Income: ${income:,.2f}
+    - Employment Status: {employment_status}
+    - Credit Score: {credit_score}
+    - Debt-to-Income Ratio: {dti_ratio:.2%}
+    - Existing Debts: ${existing_debts:,.2f}
+    - Requested Credit: ${requested_credit:,.2f}
+    
+    Please provide your analysis in JSON format with fields:
+    - data_completeness_score
+    - data_quality_assessment
+    - key_risk_indicators
+    - positive_factors
+    - missing_data_recommendations
+    - overall_profile_summary
+    - recommended_next_steps
+    """
+    
+    # Call Bedrock via native API
+    client = boto3.client("bedrock-runtime", region_name=region)
+    response = client.invoke_model(modelId=model_id, body=json.dumps(native_request))
+    analysis_text = response["body"].read().decode("utf-8")
+    
+    # Parse and return JSON
+    parsed = json.loads(analysis_text)
+    return json.dumps(parsed)
+```
+
+**Input**: Applicant demographics (8 fields)  
+**Model Used**: Claude-3-Haiku ($0.25/1M tokens - cheapest)  
+**Output JSON**:
+```json
+{
+  "data_completeness_score": 95,
+  "data_quality_assessment": "High quality application",
+  "key_risk_indicators": ["DTI ratio on higher side", "..."],
+  "positive_factors": ["Good credit score", "Stable employment"],
+  "missing_data_recommendations": [],
+  "overall_profile_summary": "Well-qualified applicant with minor concerns",
+  "recommended_next_steps": ["Proceed to risk assessment"]
+}
+```
+
+**Purpose**: Quality-check applicant data before risk evaluation
+
+---
+
+### **Step 2️⃣: Risk Assessment Tool**
+
+**File**: [CreditDecisionAgent.py](CreditDecisionAgent.py#L124-L200)
+
+```python
+@tool
+def assess_risk_tool(applicant: Dict[str, Any], 
+                     collected_data: Dict[str, Any]) -> str:
+    """Assess credit risk using Bedrock runtime. Returns JSON string."""
+    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"  # Stronger model
+    
+    prompt = f"""As a credit risk assessment expert, evaluate the 
+    following credit application and collected data and return a JSON 
+    object with:
+    
+    - overall_risk_score (1-100)
+    - risk_category (Low, Medium, High, Very High)
+    - key_risk_factors
+    - mitigating_factors
+    - recommended_credit_limit
+    - suggested_interest_rate_range
+    
+    Applicant:
+    {json.dumps(applicant, indent=2)}
+    
+    Collected Data:
+    {json.dumps(collected_data, indent=2)}
+    
+    Please respond in JSON.
+    """
+    
+    # Call Bedrock
+    client = boto3.client("bedrock-runtime", region_name=region)
+    response = client.invoke_model(modelId=model_id, body=json.dumps(native_request))
+    analysis_text = response["body"].read().decode("utf-8")
+    
+    parsed = json.loads(analysis_text)
+    return json.dumps(parsed)
+```
+
+**Input**: 
+- Applicant object (from form submission)
+- Collected data (from Step 1 output) ← **CHAINED INPUT**
+
+**Model Used**: Claude-3-Sonnet ($3/1M tokens - stronger reasoning)
+
+**Output JSON**:
+```json
+{
+  "overall_risk_score": 35,
+  "risk_category": "Low",
+  "key_risk_factors": [
+    "DTI ratio at 35% (acceptable but monitored)",
+    "Moderate existing debt"
+  ],
+  "mitigating_factors": [
+    "Strong credit score (720+)",
+    "Stable employment history",
+    "Income supports requested amount"
+  ],
+  "recommended_credit_limit": 20000,
+  "suggested_interest_rate_range": "4.5% - 6.5%"
+}
+```
+
+**Purpose**: Calculate financial risk; recommend credit terms
+
+---
+
+### **Step 3️⃣: Final Decision Tool**
+
+**File**: [CreditDecisionAgent.py](CreditDecisionAgent.py#L204-L270)
+
+```python
+@tool
+def make_decision_tool(applicant: Dict[str, Any], 
+                       risk_assessment: Dict[str, Any]) -> str:
+    """Make final credit decision. Returns JSON string."""
+    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+    
+    prompt = f"""You are a senior credit underwriter. Given the applicant 
+    and risk assessment, choose one of: APPROVE, DENY, REFER.
+    
+    For APPROVE include: credit_limit, interest_rate, term_length, conditions
+    Include confidence (1-100) and a concise reasoning field.
+    
+    Return a single JSON object with keys:
+    decision, credit_limit, interest_rate, term_length, conditions, 
+    confidence, reason
+    
+    Applicant:
+    {json.dumps(applicant, indent=2)}
+    
+    Risk Assessment:
+    {json.dumps(risk_assessment, indent=2)}
+    
+    Please respond only with the JSON object.
+    """
+    
+    # Call Bedrock with lower temperature (more deterministic)
+    native_request = {
+        "temperature": 0.2,  # More consistent decisions
+        "max_tokens": 2000,
+        "messages": [...]
+    }
+    
+    client = boto3.client("bedrock-runtime", region_name=region)
+    response = client.invoke_model(modelId=model_id, body=...)
+    analysis_text = response["body"].read().decode("utf-8")
+    
+    parsed = json.loads(analysis_text)
+    return json.dumps(parsed)
+```
+
+**Input**: 
+- Applicant object
+- Risk assessment JSON (from Step 2) ← **CHAINED INPUT**
+
+**Model Used**: Claude-3-Sonnet
+
+**Output JSON** (Example APPROVE):
+```json
+{
+  "decision": "APPROVE",
+  "credit_limit": 15000,
+  "interest_rate": 5.5,
+  "term_length": 36,
+  "conditions": [
+    "Automatic payments required",
+    "Annual income verification every 12 months",
+    "Credit score must stay above 650"
+  ],
+  "confidence": 88,
+  "reason": "Applicant demonstrates strong financial profile with stable income, solid credit history, and low risk indicators. Recommended credit terms are conservative and well-supported by risk assessment."
+}
+```
+
+**⭐ THIS IS THE KEY AGENT DECISION** - AI autonomously approves or denies credit
+
+---
+
+### **Step 4️⃣: Audit Decision Tool**
+
+**File**: [CreditDecisionAgent.py](CreditDecisionAgent.py#L274-L320)
+
+```python
+@tool
+def audit_decision_tool(applicant: Dict[str, Any],
+                        collected_data: Dict[str, Any],
+                        risk_assessment: Dict[str, Any],
+                        final_decision: Dict[str, Any]) -> str:
+    """Audit the decision flow and return a JSON audit report."""
+    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+    
+    prompt = f"""As an audit specialist, review the following and return 
+    a JSON report with:
+    
+    - audit_compliance_score (1-100)
+    - compliance_issues (list)
+    - recommendations
+    - audit_trail_summary
+    
+    Applicant:
+    {json.dumps(applicant, indent=2)}
+    Collected Data:
+    {json.dumps(collected_data, indent=2)}
+    Risk Assessment:
+    {json.dumps(risk_assessment, indent=2)}
+    Final Decision:
+    {json.dumps(final_decision, indent=2)}
+    
+    Please respond only with the JSON object.
+    """
+    
+    # Call Bedrock
+    client = boto3.client("bedrock-runtime", region_name=region)
+    response = client.invoke_model(modelId=model_id, body=...)
+    analysis_text = response["body"].read().decode("utf-8")
+    
+    parsed = json.loads(analysis_text)
+    return json.dumps(parsed)
+```
+
+**Input**: ALL previous outputs (complete review)
+- Step 1: Collected Data
+- Step 2: Risk Assessment
+- Step 3: Final Decision
+
+**Model Used**: Claude-3-Sonnet
+
+**Output JSON**:
+```json
+{
+  "audit_compliance_score": 95,
+  "compliance_issues": [],
+  "recommendations": [
+    "Documentation appears complete",
+    "Decision reasoning is well-supported",
+    "Risk assessment aligns with decision"
+  ],
+  "audit_trail_summary": "Complete decision flow with consistent reasoning across all stages. No compliance red flags detected."
+}
+```
+
+**Purpose**: Quality-check entire decision pipeline for consistency & compliance
+
+---
+
+## Technical Implementation
+
+### **The Orchestrator: `run_credit_decision()`**
+
+**File**: [CreditDecisionAgent.py](CreditDecisionAgent.py#L324-L450)
+
+This is the **master function** that coordinates all 4 AI tools in sequence:
+
+```python
+@tool
+def run_credit_decision(application_id: int) -> str:
+    """Orchestrator: fetch app, run steps, persist outputs, update status."""
+    
+    try:
+        # STEP 0: Fetch application from database
+        raw = get_application(application_id)
+        app_row = json.loads(raw)
+        
+        if app_row.get("error"):
+            return json.dumps({"error": "application_not_found"})
+        
+        # Normalize applicant dict
+        applicant = {
+            "applicant_name": app_row.get("applicant_name"),
+            "age": app_row.get("age"),
+            "income": app_row.get("income"),
+            "employment_status": app_row.get("employment_status"),
+            "credit_score": app_row.get("credit_score"),
+            "dti_ratio": app_row.get("dti_ratio"),
+            "existing_debts": app_row.get("existing_debts"),
+            "requested_credit": app_row.get("requested_credit"),
+        }
+        
+        # Update status to PROCESSING
+        update_application_status(application_id, "PROCESSING")
+        progress_messages = []
+        
+        # Helper: persist partial results
+        def _persist_partial(result_partial: dict):
+            try:
+                result_partial_copy = dict(result_partial)
+                result_partial_copy["_progress_messages"] = list(progress_messages)
+                update_application_agent_output(application_id, result_partial_copy)
+            except Exception:
+                pass  # Don't crash if persistence fails
+        
+        # ═════════════════════════════════════════════════════════════
+        # STEP 1: Data Collection
+        # ═════════════════════════════════════════════════════════════
+        progress_messages.append("Starting data collection")
+        _persist_partial({"timestamp": datetime.now().isoformat(), 
+                         "applicant": applicant})
+        
+        collected_raw = collect_data_tool(applicant)
+        try:
+            collected = json.loads(collected_raw)
+            progress_messages.append("Data collection completed")
+        except Exception:
+            collected = {"raw": collected_raw}
+            progress_messages.append("Data collection returned non-JSON")
+        
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected
+        })
+        
+        # ═════════════════════════════════════════════════════════════
+        # STEP 2: Risk Assessment (CHAINED from Step 1)
+        # ═════════════════════════════════════════════════════════════
+        progress_messages.append("Starting risk assessment")
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected
+        })
+        
+        # KEY: Pass Step 1 output as input to Step 2
+        risk_raw = assess_risk_tool(applicant, collected)
+        
+        try:
+            risk = json.loads(risk_raw)
+            progress_messages.append("Risk assessment completed")
+        except Exception:
+            risk = {"raw": risk_raw}
+            progress_messages.append("Risk assessment returned non-JSON")
+        
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk
+        })
+        
+        # ═════════════════════════════════════════════════════════════
+        # STEP 3: Final Decision (CHAINED from Step 2)
+        # ═════════════════════════════════════════════════════════════
+        progress_messages.append("Starting decision making")
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk
+        })
+        
+        # KEY: Pass Step 2 output as input to Step 3
+        decision_raw = make_decision_tool(applicant, risk)
+        
+        try:
+            decision = json.loads(decision_raw)
+            progress_messages.append("Decision completed")
+        except Exception:
+            decision = {"raw": decision_raw}
+            progress_messages.append("Decision returned non-JSON")
+        
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk,
+            "final_decision": decision
+        })
+        
+        # ═════════════════════════════════════════════════════════════
+        # STEP 4: Audit (REVIEWS ALL PREVIOUS STEPS)
+        # ═════════════════════════════════════════════════════════════
+        progress_messages.append("Starting audit")
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk,
+            "final_decision": decision
+        })
+        
+        # KEY: Pass ALL outputs for full review
+        audit_raw = audit_decision_tool(applicant, collected, risk, decision)
+        
+        try:
+            audit = json.loads(audit_raw)
+            progress_messages.append("Audit completed")
+        except Exception:
+            audit = {"raw": audit_raw}
+            progress_messages.append("Audit returned non-JSON")
+        
+        _persist_partial({
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk,
+            "final_decision": decision,
+            "audit_report": audit
+        })
+        
+        # ═════════════════════════════════════════════════════════════
+        # COMPILE FINAL RESULT
+        # ═════════════════════════════════════════════════════════════
+        result = {
+            "timestamp": datetime.now().isoformat(),
+            "applicant": applicant,
+            "data_collection": collected,
+            "risk_assessment": risk,
+            "final_decision": decision,
+            "audit_report": audit,
+            "processing_status": "completed",
+            "_progress_messages": list(progress_messages),
+        }
+        
+        # Persist all outputs to database
+        try:
+            update_application_agent_output(application_id, result)
+        except Exception:
+            pass  # Continue even if persistence fails
+        
+        # ═════════════════════════════════════════════════════════════
+        # UPDATE FINAL STATUS IN DATABASE
+        # ═════════════════════════════════════════════════════════════
+        
+        # Extract decision from Step 3
+        decided = None
+        if isinstance(decision, dict):
+            decided = str(decision.get("decision", "")).upper()
+        
+        # Map to application status
+        if decided == "APPROVE":
+            status = "APPROVED"
+        elif decided == "DENY":
+            status = "DENIED"
+        else:
+            status = "REFER"
+        
+        # Update with final decision details
+        update_application_status(
+            application_id,
+            status,
+            reason=(decision.get("reason") if isinstance(decision, dict) else None),
+            confidence=(decision.get("confidence") if isinstance(decision, dict) else None),
+        )
+        
+        return json.dumps({"result": result})
+    
+    except Exception as e:
+        update_application_status(application_id, "ERROR", reason=str(e))
+        return json.dumps({"error": "processing_failed", "message": str(e)})
+```
+
+**Key Design Pattern: Input Chaining**
+
+```
+Step 1 Input:  applicant
+Step 1 Output: collected_data
+       ↓
+Step 2 Input:  applicant + collected_data ← CHAINED
+Step 2 Output: risk_assessment
+       ↓
+Step 3 Input:  applicant + risk_assessment ← CHAINED
+Step 3 Output: final_decision
+       ↓
+Step 4 Input:  applicant + collected_data + risk_assessment + final_decision
+Step 4 Output: audit_report
+```
+
+This creates a **reasoning chain** where each step builds on previous AI analysis.
+
+---
+
+## Database Integration
+
+### **Table Structure**
+
+```sql
+CREATE TABLE applications (
+    id INT PRIMARY KEY AUTO_INCREMENT,
+    applicant_name VARCHAR(255),
+    age INT,
+    income DECIMAL(15,2),
+    employment_status VARCHAR(50),
+    credit_score INT,
+    dti_ratio DECIMAL(5,4),
+    existing_debts DECIMAL(15,2),
+    requested_credit DECIMAL(15,2),
+    
+    status VARCHAR(50),  -- PENDING, PROCESSING, APPROVED, DENIED, REFER, ERROR
+    reason TEXT,         -- Explanation from AI decision
+    confidence INT,      -- 1-100 from make_decision_tool
+    agent_output JSON,   -- Complete result from all 4 steps
+    
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+);
+```
+
+### **Key Functions (CreditDecisionStrandsDBTools.py)**
+
+```python
+def insert_application(app_dict: dict) -> str:
+    """Insert new application, return JSON with inserted_id."""
+    # Stores form submission
+    # Returns: {"inserted_id": 123}
+
+def get_application(id: int) -> str:
+    """Fetch single application by ID."""
+    # Returns: Complete application record as JSON
+
+def update_application_status(id: int, status: str, 
+                              reason: str = None, 
+                              confidence: int = None) -> str:
+    """Update status after AI decision."""
+    # Called at end of run_credit_decision()
+
+def update_application_agent_output(id: int, 
+                                    agent_output: dict) -> str:
+    """Persist agent output (called 5 times during processing)."""
+    # Stores intermediate and final results as JSON
+
+def list_applications(limit: int = 10) -> str:
+    """Get recent applications for dashboard."""
+
+def find_latest_by_applicant(name: str) -> str:
+    """Find most recent application for given name."""
+```
+
+---
+
+## UI Flow & User Interaction
+
+### **Streamlit Application (credit_decision_ui.py)**
+
+#### **1. Form Submission**
+
+```python
+# Lines 50-100
+with st.sidebar.form("applicant_form"):
+    st.subheader("Personal Information")
+    name = st.text_input("Full Name", value="John Smith")
+    age = st.number_input("Age", min_value=18, max_value=100, value=35)
+    
+    st.subheader("Financial Information")
+    income = st.number_input("Annual Income ($)", value=75000)
+    employment = st.selectbox("Employment Status", 
+                            ["Full-time", "Part-time", "Self-employed"])
+    
+    st.subheader("Credit Profile")
+    credit_score = st.number_input("Credit Score", min_value=300, 
+                                  max_value=850, value=720)
+    dti_ratio = st.slider("Debt-to-Income Ratio", 0.0, 1.0, 0.35)
+    existing_debts = st.number_input("Existing Debts ($)", value=25000)
+    
+    st.subheader("Credit Request")
+    requested_credit = st.number_input("Requested Credit Amount ($)", 
+                                      value=15000)
+    
+    submitted = st.form_submit_button("🚀 Process Application", 
+                                     type="primary")
+
+if submitted:
+    # Insert into database
+    app_id = insert_application({
+        "applicant_name": name,
+        "age": age,
+        "income": income,
+        "employment_status": employment,
+        "credit_score": credit_score,
+        "dti_ratio": dti_ratio,
+        "existing_debts": existing_debts,
+        "requested_credit": requested_credit,
+    })
+```
+
+#### **2. Background Processing**
+
+```python
+# Lines 120-150
+if submitted:
+    # Launch BACKGROUND THREAD
+    thread = threading.Thread(
+        target=run_credit_decision,
+        args=(app_id,)
+    )
+    thread.daemon = True
+    thread.start()
+    
+    st.info(f"Processing application {app_id}...")
+```
+
+#### **3. Polling for Results**
+
+```python
+# Lines 160-200
+placeholder = st.empty()
+
+while True:
+    # Get latest application state
+    result = get_application(app_id)
+    
+    if result.get("agent_output"):
+        # Agent finished processing
+        agent_output = result["agent_output"]
+        
+        with placeholder.container():
+            # Display 6 tabs with results
+            break
+    else:
+        # Still processing
+        with placeholder.container():
+            st.info("Processing... Please wait")
+        
+        time.sleep(2)  # Poll every 2 seconds
+```
+
+#### **4. Result Display (6 Tabs)**
+
+```python
+# Lines 220-400
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📋 Data Collection",
+    "⚠️ Risk Assessment", 
+    "✅ Final Decision",
+    "🔎 Audit Report",
+    "🔄 Progress",
+    "📑 Full Report"
+])
+
+# TAB 1: Data Collection (Step 1 output)
+with tab1:
+    st.json(agent_output.get("data_collection", {}))
+
+# TAB 2: Risk Assessment (Step 2 output)
+with tab2:
+    risk = agent_output.get("risk_assessment", {})
+    st.metric("Risk Score", risk.get("overall_risk_score", "N/A"))
+    st.metric("Risk Category", risk.get("risk_category", "N/A"))
+    st.json(risk)
+
+# TAB 3: Final Decision (Step 3 output)
+with tab3:
+    decision = agent_output.get("final_decision", {})
+    decision_text = decision.get("decision", "N/A")
+    
+    if decision_text == "APPROVE":
+        st.success(f"✅ APPROVED")
+    elif decision_text == "DENY":
+        st.error(f"❌ DENIED")
+    else:
+        st.warning(f"⚠️ REFER")
+    
+    st.metric("Confidence", f"{decision.get('confidence', 0)}%")
+    st.metric("Credit Limit", f"${decision.get('credit_limit', 0):,}")
+    st.metric("Interest Rate", f"{decision.get('interest_rate', 0)}%")
+    st.json(decision)
+
+# TAB 4: Audit Report (Step 4 output)
+with tab4:
+    audit = agent_output.get("audit_report", {})
+    st.metric("Compliance Score", audit.get("audit_compliance_score", "N/A"))
+    st.json(audit)
+
+# TAB 5: Progress (Live updates)
+with tab5:
+    progress = agent_output.get("_progress_messages", [])
+    for msg in progress:
+        st.write(f"✓ {msg}")
+
+# TAB 6: Full Report (Complete JSON)
+with tab6:
+    st.json(agent_output)
+```
+
+---
+
+## Models Used & Cost Analysis
+
+### **Model Selection by Step**
+
+| Step | Model | Purpose | Cost/1M tokens | Why? |
+|------|-------|---------|--------|------|
+| **1️⃣ Data Collection** | Claude-3-Haiku | Analyze data quality | $0.25 input | Fast, cheap, sufficient |
+| **2️⃣ Risk Assessment** | Claude-3-Sonnet | Evaluate financial risk | $3 input | Better reasoning |
+| **3️⃣ Final Decision** | Claude-3-Sonnet | APPROVE/DENY/REFER | $3 input | Critical decision |
+| **4️⃣ Audit** | Claude-3-Sonnet | Review entire flow | $3 input | Comprehensive review |
+
+### **Cost Breakdown (Per Application)**
+
+Assuming average token usage:
+
+- Step 1 (Haiku): ~300 tokens × $0.25/1M = $0.000075
+- Step 2 (Sonnet): ~500 tokens × $3/1M = $0.0015
+- Step 3 (Sonnet): ~600 tokens × $3/1M = $0.0018
+- Step 4 (Sonnet): ~800 tokens × $3/1M = $0.0024
+
+**Total per application: ~$0.0072 (less than 1 cent)**
+
+### **Monthly Cost Estimation**
+
+- 1,000 applications/month: $7.20 in Bedrock + AWS infrastructure
+- 10,000 applications/month: $72 in Bedrock + AWS infrastructure
+
+---
+
+## Code References
+
+### **Main Files**
+
+1. **[credit_decision_ui.py](credit_decision_ui.py)** (589 lines)
+   - Streamlit web interface
+   - Form submission & display
+   - Database polling for results
+   - 6-tab results dashboard
+
+2. **[CreditDecisionAgent.py](CreditDecisionAgent.py)** (462 lines)
+   - 4 decorated `@tool` functions
+   - `run_credit_decision()` orchestrator
+   - `make_agent()` agent factory
+   - Bedrock invocation layer
+
+3. **[CreditDecisionStrandsDBTools.py](CreditDecisionStrandsDBTools.py)** (200+ lines)
+   - `insert_application()` - Store form data
+   - `get_application()` - Fetch by ID
+   - `update_application_status()` - Update decision
+   - `update_application_agent_output()` - Persist AI results
+   - `list_applications()` - Recent applications
+   - `find_latest_by_applicant()` - Find by name
+
+4. **.env** (6 environment variables)
+   - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME`
+   - `CREDIT_DECISION_LOG` - Log file path
+
+### **Dependencies**
+
+```
+bedrock-agentcore >= 0.1.2    # AWS Bedrock utilities
+strands-agents >= 1.6.0        # Agent orchestration framework
+streamlit >= 1.28.0            # Web UI
+boto3 >= 1.28.0                # AWS SDK
+PyMySQL >= 1.0.2               # MySQL connector
+python-dotenv >= 0.21.0        # Environment variable loading
+anthropic >= 0.7.0             # Anthropic SDK
+```
+
+---
+
+## Deployment Architecture
+
+### **Local Development**
+```
+Windows PC
+├── Streamlit UI (localhost:8501)
+├── MySQL Database (AWS RDS)
+└── Python virtual environment
+```
+
+### **Production - EC2 (Recommended)**
+```
+AWS EC2 Instance (t3.small)
+├── 📦 Docker container
+│   ├── Python 3.11
+│   ├── Streamlit app
+│   └── Virtual environment
+├── 🌐 Nginx Reverse Proxy
+│   ├── Port 80 → 8501
+│   └── Port 443 → 8501 (HTTPS)
+├── 🔄 Systemd Service
+│   ├── Auto-restart on failure
+│   └── Process management
+└── 📊 CloudWatch Logs (monitoring)
+
+Connected to:
+├── AWS RDS (MySQL Database)
+├── AWS Bedrock (Claude API)
+├── AWS Secrets Manager (credentials)
+└── CloudWatch (monitoring & logs)
+```
+
+### **Cost Breakdown (Monthly)**
+
+| Service | Instance | Cost |
+|---------|----------|------|
+| **EC2** | t3.small | $20.74 |
+| **RDS** | db.t3.micro | ~$50 |
+| **Bedrock** | Per token | ~$5-20 |
+| **Data Transfer** | Outbound | ~$2-5 |
+| **Total** | | **~$75-95/month** |
+
+*Alternative: App Runner (~$37-100+/mo), Beanstalk (same as EC2), ECS (complex but scales)*
+
+---
+
+## Summary: How AI Agents Work in Your System
+
+### **The Agent Loop**
+
+```
+1. User submits form
+   ↓
+2. Application stored in database (PENDING status)
+   ↓
+3. Background thread launches run_credit_decision()
+   ↓
+4️⃣ AGENT STEP 1: AI analyzes data quality
+   └─ Result persisted to database
+   ↓
+5️⃣ AGENT STEP 2: AI assesses financial risk
+   └─ Result persisted to database
+   ↓
+6️⃣ AGENT STEP 3: AI MAKES CREDIT DECISION
+   └─ Result persisted to database
+   ↓
+7️⃣ AGENT STEP 4: AI audits entire flow
+   └─ Result persisted to database
+   ↓
+8. Application status updated (APPROVED/DENIED/REFER)
+   ↓
+9. UI polls database every 2 seconds
+   ↓
+10. Results displayed in 6 tabs
+    └─ User sees AI decision analysis
+```
+
+### **What Makes This "AI Agents"**
+
+✅ **Autonomous**: AI makes binding decisions without human approval  
+✅ **Tool-Using**: `@tool` functions called by LLM via Strands  
+✅ **Multi-Stage**: 4 sequential AI stages with input chaining  
+✅ **Persistent**: All decisions logged for audit trail  
+✅ **Production-Grade**: Error handling, logging, monitoring  
+✅ **Cost-Optimized**: Haiku for cheap analysis, Sonnet for critical decisions  
+
+---
+
+## Glossary
+
+| Term | Definition |
+|------|-----------|
+| **Strands** | Amazon's agent orchestration library for tool-calling LLMs |
+| **BedrockModel** | AWS wrapper for invoking Claude models via Bedrock API |
+| **Bedrock** | AWS managed service for LLM inference (behind the scenes) |
+| **@tool** | Python decorator that registers a function as an LLM tool |
+| **Tool Calling** | LLM detects function calls in its own response & executes them |
+| **Prompt Engineering** | Crafting text prompts to get desired LLM outputs |
+| **Input Chaining** | Passing Step N output as input to Step N+1 |
+| **JSON Parsing** | Converting text responses from LLM into structured data |
+| **Agent Factory** | `make_agent()` function that constructs the agent with all tools |
+| **Audit Trail** | Complete record of all AI decisions for compliance |
+
+---
+
+**Document Version**: 1.0  
+**Last Updated**: February 5, 2026  
+**Status**: Ready for Production Deployment
+
+---
+
+## Quick Start Deployment
+
+See: [EC2_WINDOWS_GUIDE.md](EC2_WINDOWS_GUIDE.md) for step-by-step Windows deployment instructions.
+
+For AWS/Infrastructure: See [AWS_DEPLOYMENT_GUIDE.md](AWS_DEPLOYMENT_GUIDE.md)
+
+For cost comparison: See [DEPLOYMENT_OPTIONS_COMPARISON.md](DEPLOYMENT_OPTIONS_COMPARISON.md)
