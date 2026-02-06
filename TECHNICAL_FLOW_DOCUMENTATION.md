@@ -127,37 +127,42 @@ Your application implements a **multi-agent AI credit decision system** that aut
 
 ### Framework: Strands + AWS Bedrock
 
-```python
-# CreditDecisionAgent.py - Core Agent Setup
+The system now implements a true multi-agent architecture. The core orchestration entrypoint lives in `CreditDecisionAgent.py`, but the agent implementations and orchestrator are contained in the new module `CreditDecisionAgent_MultiAgent.py`.
 
-from strands import tool, Agent
+```python
+# CreditDecisionAgent.py - Lightweight wrapper
+from strands import Agent
 from strands.models import BedrockModel
-import boto3
+from CreditDecisionAgent_MultiAgent import run_credit_decision, OrchestratorAgent
 
 def make_agent() -> Agent:
-    """Construct multi-tool agent for credit decisions."""
-    region = boto3.session.Session().region_name or "us-east-1"
+    """Return a Strands Agent that exposes the orchestrator tool only.
+
+    The heavy lifting (DataCollector, RiskAssessor, DecisionMaker, Auditor,
+    and the OrchestratorAgent) is implemented in
+    `CreditDecisionAgent_MultiAgent.py` and invoked via `run_credit_decision`.
+    """
     model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
-    
     agent = Agent(
         model=BedrockModel(model_id=model_id),
-        system_prompt="You are an autonomous credit decision assistant. "
-                     "Use the provided tools to process credit applications.",
-        tools=[
-            collect_data_tool,      # @tool #1
-            assess_risk_tool,       # @tool #2
-            make_decision_tool,     # @tool #3
-            audit_decision_tool,    # @tool #4
-            # Database tools available to agent
-            get_application,
-            insert_application,
-            update_application_status,
-            update_application_agent_output,
-            run_credit_decision,    # Orchestrator
-        ],
+        system_prompt=(
+            "Multi-agent orchestrator: coordinate DataCollector, RiskAssessor,"
+            " DecisionMaker, and Auditor to process credit applications."),
+        tools=[run_credit_decision],
     )
     return agent
 ```
+
+### Independent Agents (new)
+
+All tool implementations were moved into `CreditDecisionAgent_MultiAgent.py`. Key components:
+- `DataCollectorAgent` — Claude-3-Haiku: analyzes completeness & data quality; returns structured JSON.
+- `RiskAssessorAgent` — Claude-3-Sonnet: computes `overall_risk_score`, `risk_category`, and recommendations.
+- `DecisionMakerAgent` — Claude-3-Sonnet: produces the final `decision` (APPROVE/DENY/REFER) with terms, confidence, and reasoning.
+- `AuditAgent` — Claude-3-Sonnet: reviews the full flow and returns `audit_report` with compliance issues and recommendations.
+- `OrchestratorAgent` — Coordinates the pipeline, persists step results to the DB, and exposes `run_credit_decision(app_id)` as a `@tool` for Strands.
+
+Each agent class has an internal `_invoke_bedrock()` helper and returns JSON-serializable dicts. The `OrchestratorAgent` sequences the agents and updates the `agent_output` field in the database after each step for real-time UI polling.
 
 ### What is Strands?
 
