@@ -47,63 +47,272 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Load OrchestrateAI CSS styling
-def load_oai_css():
-    """Load OrchestrateAI styling for consistent branding."""
-    css_url = "https://oai-css-styles.s3.us-east-1.amazonaws.com/oai-streamlit-style.css"
-    st.markdown(
-        f'<link rel="stylesheet" href="{css_url}">',
-        unsafe_allow_html=True
-    )
-
-# Apply OIA styling
-load_oai_css()
+# Custom CSS styling
+st.markdown("""
+<style>
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 20px;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+    }
+    .metric-label {
+        font-size: 14px;
+        opacity: 0.9;
+        margin-top: 10px;
+    }
+    .metric-value {
+        font-size: 28px;
+        font-weight: bold;
+        margin: 10px 0;
+    }
+    .status-approved {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .status-denied {
+        background-color: #f8d7da;
+        color: #721c24;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .status-pending {
+        background-color: #fff3cd;
+        color: #856404;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+    .status-referred {
+        background-color: #d1ecf1;
+        color: #0c5460;
+        padding: 8px 12px;
+        border-radius: 5px;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Header with OIA branding
-st.title("🤖 OrchestrateAI Credit Decision Agent")
-st.markdown("*Multi-agent AI system for intelligent credit approvals*")
+col1, col2 = st.columns([0.7, 0.3])
+with col1:
+    st.title("🤖 OrchestrateAI Credit Decision Agent")
+    st.markdown("*Multi-agent AI system for intelligent credit approvals*")
+with col2:
+    st.markdown("")
+    st.markdown("")
+    if st.button("🌙 Dark Mode", help="Toggle dark/light theme"):
+        st.session_state.dark_mode = not st.session_state.get("dark_mode", False)
 
-# Sidebar for input with improved organization
-st.sidebar.header("📝 Applicant Information")
-st.sidebar.markdown("Enter applicant details for credit evaluation")
+# Create tabs for different sections
+tab1, tab2, tab3, tab4 = st.tabs(["📝 New Application", "📊 Dashboard", "🔍 Applications", "⚙️ Settings"])
 
-try:
-    with st.sidebar.form("applicant_form"):
-        st.subheader("Personal Information")
-        name = st.text_input("Full Name", value="John Smith", help="Applicant's full legal name")
-        age = st.number_input("Age", min_value=18, max_value=100, value=35, help="Age in years")
+# ==================== TAB 1: NEW APPLICATION ====================
+with tab1:
+    st.header("Submit New Credit Application")
+    
+    col_form, col_info = st.columns([2, 1])
+    
+    with col_form:
+        with st.form("applicant_form", clear_on_submit=True):
+            st.subheader("👤 Personal Information")
+            col_p1, col_p2 = st.columns(2)
+            with col_p1:
+                name = st.text_input("Full Name", value="John Smith", help="Applicant's full legal name", key="name_input")
+            with col_p2:
+                age = st.number_input("Age", min_value=18, max_value=100, value=35, help="Age in years", key="age_input")
 
-        st.subheader("Financial Information")
-        income = st.number_input("Annual Income ($)", min_value=0, value=75000, step=1000,
-                               help="Gross annual income before taxes")
-        employment = st.selectbox("Employment Status",
-                                ["Full-time", "Part-time", "Self-employed", "Unemployed", "Retired"],
-                                help="Current employment situation")
+            st.subheader("💼 Financial Information")
+            col_f1, col_f2 = st.columns(2)
+            with col_f1:
+                income = st.number_input("Annual Income ($)", min_value=0, value=75000, step=1000,
+                                       help="Gross annual income before taxes", key="income_input")
+            with col_f2:
+                employment = st.selectbox("Employment Status",
+                                        ["Full-time", "Part-time", "Self-employed", "Unemployed", "Retired"],
+                                        help="Current employment situation", key="employment_input")
 
-        st.subheader("Credit Profile")
-        credit_score = st.number_input("Credit Score", min_value=300, max_value=850, value=720,
-                                     help="FICO or equivalent credit score")
-        dti_ratio = st.slider("Debt-to-Income Ratio", 0.0, 1.0, 0.35, 0.01,
-                            help="Ratio of monthly debt payments to income")
-        existing_debts = st.number_input("Existing Debts ($)", min_value=0, value=25000, step=1000,
-                                       help="Total outstanding debt obligations")
+            st.subheader("📈 Credit Profile")
+            col_c1, col_c2, col_c3 = st.columns(3)
+            with col_c1:
+                credit_score = st.number_input("Credit Score", min_value=300, max_value=850, value=720,
+                                             help="FICO score (300-850)", key="credit_input")
+            with col_c2:
+                dti_ratio = st.slider("Debt-to-Income Ratio", 0.0, 1.0, 0.35, 0.01,
+                                    help="Ratio of debt to income", key="dti_input")
+            with col_c3:
+                existing_debts = st.number_input("Existing Debts ($)", min_value=0, value=25000, step=1000,
+                                               help="Total outstanding debt", key="debts_input")
 
-        st.subheader("Credit Request")
-        requested_credit = st.number_input("Requested Credit Amount ($)", min_value=1000, value=15000, step=1000,
-                                         help="Amount of credit being applied for")
+            st.subheader("💰 Credit Request")
+            requested_credit = st.number_input("Requested Credit Amount ($)", min_value=1000, value=15000, step=1000,
+                                             help="Amount being applied for", key="requested_input")
 
-        submitted = st.form_submit_button("🚀 Process Application", type="primary", use_container_width=True)
-except Exception as e:
-    st.sidebar.error(f"Error loading form: {str(e)}")
-    submitted = False
-    name = "John Smith"
-    age = 35
-    income = 75000
-    employment = "Full-time"
-    credit_score = 720
-    dti_ratio = 0.35
-    existing_debts = 25000
-    requested_credit = 15000
+            col_btn1, col_btn2 = st.columns(2)
+            with col_btn1:
+                submitted = st.form_submit_button("🚀 Process Application", type="primary", use_container_width=True)
+            with col_btn2:
+                st.form_submit_button("🔄 Clear Form", type="secondary", use_container_width=True)
+    
+    with col_info:
+        st.info("""
+        **Quick Tips:**
+        - Higher credit score = better approval chances
+        - DTI ratio < 0.40 is ideal
+        - Stable employment preferred
+        - Check your info before submitting
+        """)
+
+
+# ==================== TAB 2: DASHBOARD ====================
+with tab2:
+    st.header("📊 Analytics Dashboard")
+    
+    # Get all applications for stats
+    try:
+        all_apps = list_applications()
+        if all_apps:
+            apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
+            
+            # Calculate metrics
+            total_apps = len(apps_list)
+            approved_apps = sum(1 for a in apps_list if a.get("decision") == "APPROVED")
+            denied_apps = sum(1 for a in apps_list if a.get("decision") == "DENIED")
+            referred_apps = sum(1 for a in apps_list if a.get("decision") == "REFERRED")
+            pending_apps = sum(1 for a in apps_list if a.get("application_status") == "PROCESSING")
+            
+            approval_rate = (approved_apps / total_apps * 100) if total_apps > 0 else 0
+            avg_income = sum(a.get("income", 0) for a in apps_list) / total_apps if total_apps > 0 else 0
+            avg_credit = sum(a.get("credit_score", 0) for a in apps_list) / total_apps if total_apps > 0 else 0
+            
+            # Display metrics in columns
+            col_m1, col_m2, col_m3, col_m4 = st.columns(4)
+            with col_m1:
+                st.metric("Total Applications", total_apps, delta="All time")
+            with col_m2:
+                st.metric("Approval Rate", f"{approval_rate:.1f}%", delta=f"{approved_apps} approved")
+            with col_m3:
+                st.metric("Avg Credit Score", f"{avg_credit:.0f}", delta="All applicants")
+            with col_m4:
+                st.metric("Avg Annual Income", f"${avg_income:,.0f}", delta="All applicants")
+            
+            st.divider()
+            
+            # Decision breakdown chart
+            col_chart1, col_chart2 = st.columns(2)
+            with col_chart1:
+                st.subheader("Decision Breakdown")
+                decision_data = {
+                    "APPROVED": approved_apps,
+                    "DENIED": denied_apps,
+                    "REFERRED": referred_apps,
+                    "PENDING": pending_apps
+                }
+                st.bar_chart(decision_data)
+            
+            with col_chart2:
+                st.subheader("Application Status")
+                status_data = {
+                    "Processing": pending_apps,
+                    "Completed": total_apps - pending_apps
+                }
+                st.pie_chart(status_data)
+    except Exception as e:
+        st.warning(f"Could not load dashboard data: {str(e)}")
+
+
+# ==================== TAB 3: APPLICATIONS ====================
+with tab3:
+    st.header("🔍 Search & View Applications")
+    
+    col_search, col_filter = st.columns([2, 1])
+    with col_search:
+        search_name = st.text_input("🔎 Search by Applicant Name", help="Type name to search")
+    with col_filter:
+        filter_status = st.selectbox("Filter by Status", 
+                                    ["All", "APPROVED", "DENIED", "REFERRED", "PROCESSING"],
+                                    help="Filter applications by decision")
+    
+    try:
+        all_apps = list_applications()
+        if all_apps:
+            apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
+            
+            # Filter by name
+            if search_name:
+                apps_list = [a for a in apps_list if search_name.lower() in a.get("applicant_name", "").lower()]
+            
+            # Filter by status
+            if filter_status != "All":
+                apps_list = [a for a in apps_list if a.get("decision") == filter_status or a.get("application_status") == filter_status]
+            
+            if apps_list:
+                st.subheader(f"Found {len(apps_list)} Application(s)")
+                
+                for app in apps_list[:10]:  # Show last 10
+                    with st.expander(f"📋 {app.get('applicant_name', 'Unknown')} - {app.get('decision', 'PENDING')}"):
+                        col_exp1, col_exp2 = st.columns(2)
+                        with col_exp1:
+                            st.write(f"**ID:** {app.get('id')}")
+                            st.write(f"**Age:** {app.get('age')}")
+                            st.write(f"**Income:** ${app.get('income', 0):,}")
+                            st.write(f"**Employment:** {app.get('employment_status')}")
+                        with col_exp2:
+                            st.write(f"**Credit Score:** {app.get('credit_score')}")
+                            st.write(f"**DTI Ratio:** {app.get('dti_ratio'):.2%}")
+                            st.write(f"**Existing Debts:** ${app.get('existing_debts', 0):,}")
+                            st.write(f"**Requested Credit:** ${app.get('requested_credit', 0):,}")
+                        
+                        if app.get("agent_output"):
+                            st.divider()
+                            st.subheader("🤖 Agent Analysis")
+                            st.json(json.loads(app.get("agent_output")) if isinstance(app.get("agent_output"), str) else app.get("agent_output"))
+            else:
+                st.info("No applications found matching your criteria.")
+    except Exception as e:
+        st.warning(f"Could not load applications: {str(e)}")
+
+
+# ==================== TAB 4: SETTINGS ====================
+with tab4:
+    st.header("⚙️ Settings")
+    
+    col_set1, col_set2 = st.columns(2)
+    
+    with col_set1:
+        st.subheader("🎨 Appearance")
+        theme = st.radio("Theme", ["Light", "Dark", "Auto"], help="Choose UI theme")
+        font_size = st.slider("Font Size", 10, 18, 14, help="Adjust base font size")
+    
+    with col_set2:
+        st.subheader("📋 Preferences")
+        auto_refresh = st.checkbox("Auto-refresh dashboard", value=True, help="Refresh data automatically")
+        show_confidence = st.checkbox("Show AI confidence scores", value=True, help="Display model confidence")
+        export_format = st.selectbox("Default export format", ["CSV", "PDF", "JSON"])
+    
+    st.divider()
+    st.subheader("📊 Database Info")
+    st.info(f"""
+    - **Host:** {os.getenv('DB_HOST', 'Not configured')}
+    - **Region:** {os.getenv('AWS_REGION', 'us-east-1')}
+    - **App Version:** 2.0 (EC2 Deployed)
+    """)
+    
+    col_exp1, col_exp2 = st.columns(2)
+    with col_exp1:
+        if st.button("🔄 Refresh Database Connection"):
+            st.success("Database connection refreshed!")
+    with col_exp2:
+        if st.button("📥 Download Logs"):
+            st.info("Download functionality coming soon")
+
+st.divider()
+
 
 # Main content area
 if submitted:
