@@ -1,9 +1,10 @@
 # Credit Decision Agent - Technical Flow Documentation
 
-**Date**: February 5, 2026  
+**Date**: February 8, 2026  
 **Project**: AI Agent Credit Decision System  
 **Framework**: Strands + AWS Bedrock + Anthropic Claude  
-**Status**: Production Ready
+**Status**: Production Ready  
+**Latest Updates**: UI Collapsible Sidebar, Quick Stats Dashboard, Real-time Progress Display
 
 ---
 
@@ -742,146 +743,340 @@ def find_latest_by_applicant(name: str) -> str:
 
 ## UI Flow & User Interaction
 
-### **Streamlit Application (credit_decision_ui.py)**
+### **Streamlit Application (credit_decision_ui.py) - Updated Features**
 
-#### **1. Form Submission**
+#### **NEW: Sidebar Collapsing Behavior**
+
+The Streamlit UI now implements dynamic sidebar visibility using `st.session_state`:
 
 ```python
-# Lines 50-100
+# Lines 106-110: Initialize sidebar state
+if "sidebar_open" not in st.session_state:
+    st.session_state.sidebar_open = True
+
+# Hide sidebar CSS when closed
+if not st.session_state.sidebar_open:
+    st.markdown("""
+    <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+```
+
+**Behavior Timeline**:
+1. **Initial State**: Sidebar open showing application form
+2. **User fills form** and clicks "🚀 Process" button
+3. **On submission**: 
+   - `st.session_state.sidebar_open = False` is set
+   - Sidebar collapses and hides completely
+   - CSS `display: none` removes the element from view
+   - Form data saved to session state for retrieval if reopened
+4. **After processing**:
+   - Full width available for results display (6 tabs)
+   - "📝 Show Form" button appears in main area
+   - User can click to reopen sidebar and process new applications
+5. **On reopening**: 
+   - Previous form values are restored from session state
+   - User can edit and submit new applications
+
+#### **NEW: Quick Stats Dashboard**
+
+The sidebar now displays live statistics pulled from the database:
+
+```python
+# Lines 135-165: Quick Stats Implementation
+if st.session_state.sidebar_open:
+    st.sidebar.divider()
+    st.sidebar.subheader("📊 Quick Stats")
+    try:
+        all_apps = list_applications()
+        if all_apps:
+            apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
+            total = len(apps_list)
+            
+            # IMPORTANT: Use "application_status" field (not "decision")
+            # Values: "APPROVE", "DENY", "REFER"
+            approved = sum(1 for a in apps_list if a.get("application_status") == "APPROVE")
+            denied = sum(1 for a in apps_list if a.get("application_status") == "DENY")
+            pending = sum(1 for a in apps_list if a.get("application_status") == "REFER")
+            
+            st.sidebar.metric("Total Apps", total)
+            st.sidebar.metric("✅ Approved", approved)
+            st.sidebar.metric("❌ Denied", denied)
+            st.sidebar.metric("⏳ Pending", pending)
+            
+            if total > 0:
+                approval_rate = (approved / total) * 100
+                st.sidebar.metric("Approval Rate", f"{approval_rate:.1f}%")
+    except Exception as e:
+        logger.exception(f"UI: Failed to load quick stats: {e}")
+        st.sidebar.info("No data yet")
+```
+
+**Key Points**:
+- Uses `application_status` field (NOT `decision` field)
+- Status values: `"APPROVE"`, `"DENY"`, `"REFER"` (NOT `"APPROVED"`, `"DENIED"`)
+- Updates in real-time as new applications are processed
+- Automatically calculates approval rate percentage
+
+#### **NEW: Form Data Persistence**
+
+Form values are now persistent across sidebar open/close cycles:
+
+```python
+# Lines 112-118: Initialize form data in session state
+if "form_data" not in st.session_state:
+    st.session_state.form_data = {
+        "name": "John Smith",
+        "age": 35,
+        "income": 75000,
+        "employment": "Full-time",
+        "credit_score": 720,
+        "dti_ratio": 0.35,
+        "existing_debts": 25000,
+        "requested_credit": 15000,
+    }
+
+# Lines 119-165: Use session state values for form inputs
 with st.sidebar.form("applicant_form"):
-    st.subheader("Personal Information")
-    name = st.text_input("Full Name", value="John Smith")
-    age = st.number_input("Age", min_value=18, max_value=100, value=35)
+    name = st.text_input("Full Name", value=st.session_state.form_data["name"])
+    age = st.number_input("Age", value=st.session_state.form_data["age"])
+    # ... rest of inputs
     
-    st.subheader("Financial Information")
-    income = st.number_input("Annual Income ($)", value=75000)
-    employment = st.selectbox("Employment Status", 
-                            ["Full-time", "Part-time", "Self-employed"])
-    
-    st.subheader("Credit Profile")
-    credit_score = st.number_input("Credit Score", min_value=300, 
-                                  max_value=850, value=720)
-    dti_ratio = st.slider("Debt-to-Income Ratio", 0.0, 1.0, 0.35)
-    existing_debts = st.number_input("Existing Debts ($)", value=25000)
-    
-    st.subheader("Credit Request")
-    requested_credit = st.number_input("Requested Credit Amount ($)", 
-                                      value=15000)
-    
-    submitted = st.form_submit_button("🚀 Process Application", 
-                                     type="primary")
-
-if submitted:
-    # Insert into database
-    app_id = insert_application({
-        "applicant_name": name,
-        "age": age,
-        "income": income,
-        "employment_status": employment,
-        "credit_score": credit_score,
-        "dti_ratio": dti_ratio,
-        "existing_debts": existing_debts,
-        "requested_credit": requested_credit,
-    })
+    if submitted:
+        # Save updated values back to session state
+        st.session_state.form_data = {
+            "name": name,
+            "age": age,
+            # ... all other fields
+        }
 ```
 
-#### **2. Background Processing**
+#### **NEW: Real-time Progress Display**
+
+During processing, the UI displays only the "progress" element from agent output:
 
 ```python
-# Lines 120-150
-if submitted:
-    # Launch BACKGROUND THREAD
-    thread = threading.Thread(
-        target=run_credit_decision,
-        args=(app_id,)
-    )
-    thread.daemon = True
-    thread.start()
-    
-    st.info(f"Processing application {app_id}...")
-```
-
-#### **3. Polling for Results**
-
-```python
-# Lines 160-200
+# Lines 254-265: Progress polling with selective display
 placeholder = st.empty()
 
 while True:
-    # Get latest application state
-    result = get_application(app_id)
+    raw_app = get_application(app_id)
+    appobj = json.loads(raw_app)
+    agent_out = appobj.get("agent_output")
     
-    if result.get("agent_output"):
-        # Agent finished processing
-        agent_output = result["agent_output"]
+    if agent_out:
+        parsed = json.loads(agent_out) if isinstance(agent_out, str) else agent_out
         
-        with placeholder.container():
-            # Display 6 tabs with results
-            break
-    else:
-        # Still processing
-        with placeholder.container():
-            st.info("Processing... Please wait")
-        
-        time.sleep(2)  # Poll every 2 seconds
+        # Display ONLY the progress element (not entire JSON)
+        progress_data = parsed.get("progress") if isinstance(parsed, dict) else None
+        if progress_data:
+            placeholder.json(progress_data)  # Array of progress messages
+        else:
+            placeholder.text("Processing... (waiting for progress data)")
 ```
 
-#### **4. Result Display (6 Tabs)**
+**Progress Array Format**:
+```json
+{
+  "progress": [
+    "[2026-02-08T16:29:52.627598] Agent 1 (DataCollector) starting...",
+    "[2026-02-08T16:29:57.100320] Agent 1 (DataCollector) completed",
+    "[2026-02-08T16:29:57.492179] Agent 2 (RiskAssessor) starting...",
+    "[2026-02-08T16:30:00.580632] Agent 2 (RiskAssessor) completed",
+    "[2026-02-08T16:30:00.920012] Agent 3 (DecisionMaker) starting...",
+    "[2026-02-08T16:30:05.105415] Agent 3 (DecisionMaker) completed",
+    "[2026-02-08T16:30:05.422761] Agent 4 (Auditor) starting...",
+    "[2026-02-08T16:30:10.710747] Agent 4 (Auditor) completed"
+  ]
+}
+```
+
+#### **1. Application Form (Left Sidebar - COLLAPSIBLE)**
 
 ```python
-# Lines 220-400
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📋 Data Collection",
-    "⚠️ Risk Assessment", 
-    "✅ Final Decision",
-    "🔎 Audit Report",
-    "🔄 Progress",
-    "📑 Full Report"
+# Lines 119-135
+if st.session_state.sidebar_open:
+    st.sidebar.header("📝 Applicant Information")
+    
+    with st.sidebar.form("applicant_form"):
+        st.subheader("Personal Info")
+        name = st.text_input("Full Name", value=st.session_state.form_data["name"])
+        age = st.number_input("Age", min_value=18, max_value=100, 
+                             value=st.session_state.form_data["age"])
+
+        st.subheader("Financial Info")
+        income = st.number_input("Annual Income ($)", value=st.session_state.form_data["income"])
+        employment = st.selectbox("Employment Status", 
+                                ["Full-time", "Part-time", "Self-employed", "Unemployed", "Retired"],
+                                index=["Full-time", "Part-time", "Self-employed", "Unemployed", "Retired"]
+                                     .index(st.session_state.form_data["employment"]))
+
+        st.subheader("Credit Profile")
+        credit_score = st.number_input("Credit Score", value=st.session_state.form_data["credit_score"])
+        dti_ratio = st.slider("DTI Ratio", value=st.session_state.form_data["dti_ratio"])
+        existing_debts = st.number_input("Existing Debts ($)", value=st.session_state.form_data["existing_debts"])
+
+        st.subheader("Credit Request")
+        requested_credit = st.number_input("Requested Credit ($)", value=st.session_state.form_data["requested_credit"])
+
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            submitted = st.form_submit_button("🚀 Process", type="primary")
+        with col_btn2:
+            st.form_submit_button("🔄 Clear", type="secondary")
+else:
+    submitted = False
+    # Show reopening button
+    if st.sidebar.button("📝 Show Form to Process New Application"):
+        st.session_state.sidebar_open = True
+        st.rerun()
+```
+
+#### **2. Background Processing Thread**
+
+```python
+# Lines 172-187
+if submitted:
+    # Prepare applicant data
+    applicant_data = {
+        "applicant_name": name,
+        "age": age,
+        # ... other fields
+    }
+
+    # Insert into database
+    insert_resp = insert_application(applicant_data)
+    insert_obj = json.loads(insert_resp)
+    app_id = insert_obj.get("inserted_id")
+
+    # Launch background thread to run agents
+    def _agent_worker(aid: int):
+        try:
+            logger.info(f"Background agent worker started for app_id={aid}")
+            run_credit_decision(aid)  # ← Runs the 4-agent pipeline
+            logger.info(f"Background agent worker finished for app_id={aid}")
+        except Exception:
+            logger.exception(f"Background agent worker error for app_id={aid}")
+
+    t = threading.Thread(target=_agent_worker, args=(app_id,), daemon=True)
+    t.start()
+    
+    # Collapse sidebar immediately
+    st.session_state.sidebar_open = False
+    
+    logger.debug(f"Background thread started for app_id={app_id}")
+```
+
+#### **3. Polling for Results (Every 1 Second)**
+
+```python
+# Lines 237-269
+placeholder = st.empty()
+poll_start = time.time()
+
+while True:
+    try:
+        raw_app = get_application(app_id)
+        appobj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
+        agent_out = appobj.get("agent_output")
+        
+        if agent_out:
+            try:
+                parsed = json.loads(agent_out) if isinstance(agent_out, str) else agent_out
+            except Exception as parse_err:
+                logger.error(f"Failed to parse agent_output: {parse_err}")
+                parsed = agent_out
+            
+            try:
+                # Display ONLY the progress element (array of messages)
+                progress_data = parsed.get("progress") if isinstance(parsed, dict) else None
+                if progress_data:
+                    placeholder.json(progress_data)
+                else:
+                    placeholder.text("Processing... (waiting for progress data)")
+            except Exception as display_err:
+                logger.error(f"Failed to display JSON: {display_err}")
+                placeholder.text(str(parsed)[:2000])
+
+            # Check if processing completed
+            if isinstance(parsed, dict) and parsed.get("processing_status") == "completed":
+                logger.info(f"Processing completed for app_id={app_id}")
+                result = parsed
+                break
+    except Exception as poll_err:
+        logger.warning(f"Polling error for app_id={app_id}: {poll_err}")
+        placeholder.text("Waiting for agent to persist progress...")
+
+    # Timeout after 5 minutes
+    if time.time() - poll_start > 300:
+        logger.error(f"Polling timeout after 300s for app_id={app_id}")
+        placeholder.text("Timed out waiting for agent.")
+        break
+    
+    time.sleep(1)  # Poll every 1 second
+```
+
+#### **4. Result Display with 6 Tabs**
+
+```python
+# Lines 290-380
+st.success("✅ Application processed successfully!")
+
+# Clear the status message that was shown during processing
+if status_placeholder:
+    status_placeholder.empty()
+
+# Summary metrics
+col1, col2, col3 = st.columns(3)
+with col1:
+    dec = final_decision.get('decision') if isinstance(final_decision, dict) else 'UNKNOWN'
+    st.metric("Decision", dec)
+with col2:
+    conf = final_decision.get('confidence') if isinstance(final_decision, dict) else 0
+    st.metric("Confidence", f"{conf}%")
+with col3:
+    audit_score = audit_report.get('audit_compliance_score') if isinstance(audit_report, dict) else 0
+    st.metric("Audit Score", f"{audit_score}/100")
+
+# Detailed tabs
+tab_progress, tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "🛰️ Progress", "📊 Data", "⚠️ Risk", "🤖 Decision", "📋 Audit", "📄 Full"
 ])
 
-# TAB 1: Data Collection (Step 1 output)
-with tab1:
-    st.json(agent_output.get("data_collection", {}))
+with tab1:  # Data Collection
+    st.subheader("Data Collection")
+    st.json(data_collection)
 
-# TAB 2: Risk Assessment (Step 2 output)
-with tab2:
-    risk = agent_output.get("risk_assessment", {})
-    st.metric("Risk Score", risk.get("overall_risk_score", "N/A"))
-    st.metric("Risk Category", risk.get("risk_category", "N/A"))
-    st.json(risk)
+with tab2:  # Risk Assessment
+    st.subheader("Risk Assessment")
+    st.json(risk_assessment)
 
-# TAB 3: Final Decision (Step 3 output)
-with tab3:
-    decision = agent_output.get("final_decision", {})
-    decision_text = decision.get("decision", "N/A")
-    
-    if decision_text == "APPROVE":
-        st.success(f"✅ APPROVED")
-    elif decision_text == "DENY":
-        st.error(f"❌ DENIED")
-    else:
-        st.warning(f"⚠️ REFER")
-    
-    st.metric("Confidence", f"{decision.get('confidence', 0)}%")
-    st.metric("Credit Limit", f"${decision.get('credit_limit', 0):,}")
-    st.metric("Interest Rate", f"{decision.get('interest_rate', 0)}%")
-    st.json(decision)
+with tab3:  # Final Decision
+    st.subheader("Final Decision")
+    decision = final_decision.get('decision', 'UNKNOWN')
+    if decision == 'APPROVE':
+        st.success("✅ Application Approved!")
+    elif decision == 'DENY':
+        st.error("❌ Application Denied")
+    elif decision == 'REFER':
+        st.warning("⚠️ Referred for Manual Review")
+    st.json(final_decision)
 
-# TAB 4: Audit Report (Step 4 output)
-with tab4:
-    audit = agent_output.get("audit_report", {})
-    st.metric("Compliance Score", audit.get("audit_compliance_score", "N/A"))
-    st.json(audit)
+with tab4:  # Audit Report
+    st.subheader("Audit Report")
+    st.json(audit_report)
 
-# TAB 5: Progress (Live updates)
-with tab5:
-    progress = agent_output.get("_progress_messages", [])
-    for msg in progress:
-        st.write(f"✓ {msg}")
+with tab5:  # Full Report
+    st.subheader("Full Report")
+    st.json(result)
 
-# TAB 6: Full Report (Complete JSON)
-with tab6:
-    st.json(agent_output)
+with tab_progress:  # Progress Timeline
+    st.subheader("Processing Timeline")
+    proc_status = result.get("processing_status")
+    st.markdown(f"**Status:** {proc_status or 'unknown'}")
 ```
 
 ---
