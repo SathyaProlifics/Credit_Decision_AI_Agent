@@ -1,0 +1,37 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: "Serverless function to stop EC2 instance(s) on a schedule via EventBridge"
+
+Resources:
+  StopEC2Function:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: stop-ec2-on-schedule
+      Handler: stop_ec2_lambda.lambda_handler
+      Runtime: python3.11
+      Timeout: 30
+      MemorySize: 128
+      Environment:
+        Variables:
+          # Set a default here or override during deployment
+          TARGET_INSTANCE_ID: ""
+      Policies:
+        - Statement:
+            Effect: Allow
+            Action:
+              - ec2:StopInstances
+              - ec2:DescribeInstances
+            Resource: "*"
+      Events:
+        ScheduledStop:
+          Type: Schedule
+          Properties:
+            # Example: every day at 02:00 UTC -> cron(0 2 * * ? *)
+            # Replace with your desired cron or rate expression
+            Schedule: cron(0 2 * * ? *)
+            Enabled: true
+
+Outputs:
+  StopEC2FunctionArn:
+    Description: "ARN of the StopEC2 Lambda"
+    Value: !GetAtt StopEC2Function.Arn

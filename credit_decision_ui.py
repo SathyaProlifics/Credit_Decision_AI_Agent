@@ -3,6 +3,7 @@ import os
 import asyncio
 import json
 import logging
+import logging.handlers
 import threading
 import time
 from pathlib import Path
@@ -28,6 +29,15 @@ logging.basicConfig(
     filemode="a",
 )
 logger = logging.getLogger("credit_decision_ui")
+logger.setLevel(logging.DEBUG)  # Enable DEBUG level logging
+
+# Also add a file handler for more detailed logging
+file_handler = logging.handlers.RotatingFileHandler(
+    LOG_FILE, maxBytes=10*1024*1024, backupCount=5  # 10MB per file, 5 backups
+)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+logger.addHandler(file_handler)
 
 # DB tools (Strands wrappers) for persisting and querying applications
 from CreditDecisionStrandsDBTools import (
@@ -125,9 +135,12 @@ with st.sidebar.form("applicant_form"):
 st.sidebar.divider()
 st.sidebar.subheader("📊 Quick Stats")
 try:
+    logger.debug("UI: Fetching quick stats from list_applications()")
     all_apps = list_applications()
+    logger.debug(f"UI: list_applications returned response of length {len(all_apps) if isinstance(all_apps, str) else 'N/A'}")
     if all_apps:
         apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
+        logger.debug(f"UI: Parsed {len(apps_list)} applications from quick stats query")
         total = len(apps_list)
         approved = sum(1 for a in apps_list if a.get("decision") == "APPROVED")
         denied = sum(1 for a in apps_list if a.get("decision") == "DENIED")
@@ -141,7 +154,9 @@ try:
         if total > 0:
             approval_rate = (approved / total) * 100
             st.sidebar.metric("Approval Rate", f"{approval_rate:.1f}%")
-except:
+            logger.debug(f"UI: Quick stats - Total: {total}, Approved: {approved}, Denied: {denied}, Pending: {pending}")
+except Exception as e:
+    logger.exception(f"UI: Failed to load quick stats: {e}")
     st.sidebar.info("No data yet")
 
 # ==================== CENTER PANE: MAIN CONTENT ====================
@@ -161,66 +176,86 @@ if submitted:
         "agent_output": {},
     }
 
+    logger.info(f"UI: Application submission received - applicant: {name}, requested_credit: ${requested_credit}")
     with st.spinner("🤖 Processing application through AI agents..."):
         try:
             # persist initial application record
+            logger.debug(f"UI: Inserting application into database for {name}")
             insert_resp = insert_application(applicant_data)
+            logger.debug(f"UI: insert_application response: {insert_resp}")
             try:
                 insert_obj = json.loads(insert_resp)
                 app_id = insert_obj.get("inserted_id")
-            except Exception:
+                logger.info(f"UI: Successfully inserted application with id={app_id}")
+            except Exception as e:
+                logger.error(f"UI: Failed to parse insert response: {e}", exc_info=True)
                 app_id = None
 
             if app_id:
                 st.info(f"Saved application to DB (id={app_id}) - processing...")
+                logger.info(f"UI: Displaying application saved message, id={app_id}")
+            else:
+                logger.error(f"UI: Failed to get application ID from insert response")
 
             # Initialize agent and run orchestration
             agent = None
             try:
-                logger.info("Initializing Strands agent")
+                logger.info(f"UI: Initializing Strands agent for app_id={app_id}")
                 agent = make_agent()
+                logger.debug(f"UI: Agent initialized successfully")
             except Exception as e:
-                logger.exception("make_agent() failed: %s", str(e))
+                logger.exception(f"UI: make_agent() failed: {e}")
 
             result = None
             if app_id:
                 # Run in background thread
                 def _agent_worker(aid: int):
                     try:
-                        logger.info("Background agent worker started for app_id=%s", aid)
+                        logger.info(f"UI: Background agent worker started for app_id={aid}")
                         run_credit_decision(aid)
-                        logger.info("Background agent worker finished for app_id=%s", aid)
+                        logger.info(f"UI: Background agent worker finished for app_id={aid}")
                     except Exception:
-                        logger.exception("Background agent worker error for app_id=%s", aid)
+                        logger.exception(f"UI: Background agent worker error for app_id={aid}")
 
                 t = threading.Thread(target=_agent_worker, args=(app_id,), daemon=True)
                 t.start()
+                logger.debug(f"UI: Background thread started for app_id={app_id}")
 
                 # Poll DB for progress
                 placeholder = st.empty()
                 poll_start = time.time()
+                poll_count = 0
                 while True:
+                    poll_count += 1
+                    logger.debug(f"UI: Polling database (attempt {poll_count}) for app_id={app_id}")
                     try:
                         raw_app = get_application(app_id)
+                        logger.debug(f"UI: Raw app response length: {len(raw_app) if isinstance(raw_app, str) else 'N/A'}")
                         appobj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
                         agent_out = appobj.get("agent_output")
                         if agent_out:
                             try:
                                 parsed = json.loads(agent_out) if isinstance(agent_out, str) else agent_out
-                            except Exception:
+                                logger.debug(f"UI: Parsed agent_output successfully for app_id={app_id}")
+                            except Exception as parse_err:
+                                logger.error(f"UI: Failed to parse agent_output: {parse_err}", exc_info=True)
                                 parsed = agent_out
                             try:
                                 placeholder.json(parsed)
-                            except Exception:
+                            except Exception as display_err:
+                                logger.error(f"UI: Failed to display JSON: {display_err}", exc_info=True)
                                 placeholder.text(str(parsed)[:2000])
 
                             if isinstance(parsed, dict) and parsed.get("processing_status") == "completed":
+                                logger.info(f"UI: Processing completed for app_id={app_id}")
                                 result = parsed
                                 break
-                    except Exception:
+                    except Exception as poll_err:
+                        logger.warning(f"UI: Polling error for app_id={app_id}: {poll_err}", exc_info=True)
                         placeholder.text("Waiting for agent to persist progress...")
 
                     if time.time() - poll_start > 300:
+                        logger.error(f"UI: Polling timeout after 300s for app_id={app_id}")
                         placeholder.text("Timed out waiting for agent.")
                         break
                     time.sleep(1)
@@ -233,18 +268,22 @@ if submitted:
                         result = parsed['result']
                     else:
                         result = parsed
-                except Exception:
+                except Exception as parse_err:
+                    logger.error(f"UI: Failed to parse string result: {parse_err}", exc_info=True)
                     st.error("❌ Agent returned non-JSON response")
                     st.text(result)
                     result = {"error": "non_json_response"}
 
             # Display results
+            logger.info(f"UI: Displaying application results for app_id={app_id}")
             st.success("✅ Application processed successfully!")
 
             final_decision = result.get('final_decision') if isinstance(result, dict) else None
             audit_report = result.get('audit_report') if isinstance(result, dict) else None
             data_collection = result.get('data_collection') if isinstance(result, dict) else None
             risk_assessment = result.get('risk_assessment') if isinstance(result, dict) else None
+
+            logger.debug(f"UI: Extracted final_decision, audit_report, data_collection, risk_assessment from result")
 
             # Summary metrics
             col1, col2, col3 = st.columns(3)
@@ -257,6 +296,8 @@ if submitted:
             with col3:
                 audit_score = audit_report.get('audit_compliance_score') if isinstance(audit_report, dict) else 0
                 st.metric("Audit Score", f"{audit_score}/100")
+
+            logger.debug(f"UI: Displayed summary metrics for app_id={app_id}")
 
             # Detailed tabs
             tab_progress, tab1, tab2, tab3, tab4, tab5 = st.tabs(
@@ -312,16 +353,20 @@ if submitted:
                 if app_id and final_decision:
                     decision = final_decision.get("decision") or "UNKNOWN"
                     confidence = final_decision.get("confidence")
+                    logger.debug(f"UI: Final decision={decision}, confidence={confidence} for app_id={app_id}")
                     update_application_status(app_id, decision, reason=final_decision.get("reason"), confidence=confidence)
+                    logger.debug(f"UI: Updated application_status for app_id={app_id}")
                     update_application_agent_output(app_id, result)
+                    logger.debug(f"UI: Updated application_agent_output for app_id={app_id}")
                     st.text(f"Saved application id: {app_id}")
-            except Exception as e:
-                logger.exception("Failed to update DB: %s", str(e))
+                    logger.info(f"UI: Successfully saved final application data for app_id={app_id}")
+            except Exception as db_err:
+                logger.exception(f"UI: Failed to update DB after processing (app_id={app_id}): {db_err}")
 
         except Exception as e:
+            logger.exception(f"UI: Error processing application: {e}")
             st.error(f"❌ Error processing application: {str(e)}")
             st.exception(e)
-            logger.exception("Error processing application: %s", str(e))
 
 else:
     # Welcome message when no submission

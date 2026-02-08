@@ -1,16 +1,17 @@
 import os
 import json
 import boto3
+import logging
 from datetime import datetime
 from typing import Any, Dict
 from bedrock_agentcore._utils import endpoints
-import logging
 
 from strands import tool, Agent
 from strands.models import BedrockModel
 
 region = boto3.session.Session().region_name or "us-east-1"
 logger = logging.getLogger("credit_decision_agent")
+logger.setLevel(logging.DEBUG)  # Ensure DEBUG level is set
 
 # Import DB tools (these are `@tool` wrappers but callable as functions)
 from CreditDecisionStrandsDBTools import (
@@ -69,6 +70,7 @@ Provide analysis in JSON with: data_completeness_score, quality_assessment, key_
     
     def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
         """Call Bedrock Claude model"""
+        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
         try:
             client = boto3.client("bedrock-runtime", region_name=region)
             body = json.dumps({
@@ -77,14 +79,19 @@ Provide analysis in JSON with: data_completeness_score, quality_assessment, key_
                 "temperature": 0.3,
                 "messages": [{"role": "user", "content": prompt}]
             })
+            logger.debug(f"{self.name} agent: Sending request to Bedrock")
             response = client.invoke_model(modelId=self.model_id, body=body)
             text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
+            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
             try:
-                return json.loads(text)
-            except:
+                result = json.loads(text)
+                logger.info(f"{self.name} agent: Successfully parsed JSON response")
+                return result
+            except Exception as e:
+                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
                 return {"analysis": text, "format": "text"}
         except Exception as e:
-            logger.exception(f"{self.name} agent failed: {e}")
+            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
             return {"error": str(e), "agent": self.name}
 
 
@@ -112,6 +119,7 @@ Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category 
     
     def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
         """Call Bedrock Claude model"""
+        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
         try:
             client = boto3.client("bedrock-runtime", region_name=region)
             body = json.dumps({
@@ -120,14 +128,19 @@ Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category 
                 "temperature": 0.3,
                 "messages": [{"role": "user", "content": prompt}]
             })
+            logger.debug(f"{self.name} agent: Sending request to Bedrock")
             response = client.invoke_model(modelId=self.model_id, body=body)
             text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
+            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
             try:
-                return json.loads(text)
-            except:
+                result = json.loads(text)
+                logger.info(f"{self.name} agent: Successfully parsed JSON response")
+                return result
+            except Exception as e:
+                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
                 return {"analysis": text, "format": "text"}
         except Exception as e:
-            logger.exception(f"{self.name} agent failed: {e}")
+            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
             return {"error": str(e), "agent": self.name}
 
 
@@ -140,6 +153,7 @@ class DecisionMakerAgent:
         
     def decide(self, applicant: Dict[str, Any], risk_assessment: Dict[str, Any]) -> Dict[str, Any]:
         """Make final credit decision"""
+        logger.info(f"{self.name} agent: Starting decision process")
         
         prompt = f"""As a SENIOR CREDIT UNDERWRITER, make a decision on this application:
 
@@ -160,6 +174,7 @@ Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate
     
     def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
         """Call Bedrock Claude model"""
+        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
         try:
             client = boto3.client("bedrock-runtime", region_name=region)
             body = json.dumps({
@@ -168,14 +183,19 @@ Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate
                 "temperature": 0.2,
                 "messages": [{"role": "user", "content": prompt}]
             })
+            logger.debug(f"{self.name} agent: Sending request to Bedrock")
             response = client.invoke_model(modelId=self.model_id, body=body)
             text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
+            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
             try:
-                return json.loads(text)
-            except:
+                result = json.loads(text)
+                logger.info(f"{self.name} agent: Successfully parsed decision response")
+                return result
+            except Exception as e:
+                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
                 return {"analysis": text, "format": "text"}
         except Exception as e:
-            logger.exception(f"{self.name} agent failed: {e}")
+            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
             return {"error": str(e), "agent": self.name}
 
 
@@ -189,6 +209,7 @@ class AuditAgent:
     def audit(self, applicant: Dict[str, Any], collected_data: Dict[str, Any], 
               risk_assessment: Dict[str, Any], final_decision: Dict[str, Any]) -> Dict[str, Any]:
         """Audit the entire decision process"""
+        logger.info(f"{self.name} agent: Starting audit process")
         
         prompt = f"""As a CREDIT AUDIT & COMPLIANCE SPECIALIST, review this complete decision audit:
 
@@ -210,6 +231,7 @@ Provide comprehensive audit report in JSON with: audit_compliance_score (1-100),
     
     def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
         """Call Bedrock Claude model"""
+        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
         try:
             client = boto3.client("bedrock-runtime", region_name=region)
             body = json.dumps({
@@ -218,14 +240,19 @@ Provide comprehensive audit report in JSON with: audit_compliance_score (1-100),
                 "temperature": 0.2,
                 "messages": [{"role": "user", "content": prompt}]
             })
+            logger.debug(f"{self.name} agent: Sending request to Bedrock")
             response = client.invoke_model(modelId=self.model_id, body=body)
             text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
+            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
             try:
-                return json.loads(text)
-            except:
+                result = json.loads(text)
+                logger.info(f"{self.name} agent: Successfully parsed audit report")
+                return result
+            except Exception as e:
+                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
                 return {"analysis": text, "format": "text"}
         except Exception as e:
-            logger.exception(f"{self.name} agent failed: {e}")
+            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
             return {"error": str(e), "agent": self.name}
 
 
@@ -241,15 +268,20 @@ class OrchestratorAgent:
     
     def process_application(self, application_id: int) -> Dict[str, Any]:
         """Coordinate multi-agent processing pipeline"""
+        logger.info(f"Orchestrator: Starting process_application for id={application_id}")
         
         progress = []
         
         try:
             # Fetch application
+            logger.debug(f"Orchestrator: Fetching application {application_id} from DB")
             raw = get_application(application_id)
+            logger.debug(f"Orchestrator: Received raw response from get_application")
             app_row = json.loads(raw)
             if app_row.get("error"):
+                logger.error(f"Orchestrator: get_application returned error for id={application_id}: {app_row.get('error')}")
                 return {"error": "application_not_found"}
+            logger.info(f"Orchestrator: Successfully fetched application {application_id}")
             
             # Normalize applicant data
             applicant = {
@@ -262,10 +294,13 @@ class OrchestratorAgent:
                 "existing_debts": app_row.get("existing_debts"),
                 "requested_credit": app_row.get("requested_credit"),
             }
+            logger.debug(f"Orchestrator: Normalized applicant data")
             
+            logger.debug(f"Orchestrator: Updating status to PROCESSING for id={application_id}")
             update_application_status(application_id, "PROCESSING")
             
             # ========== AGENT 1: DATA COLLECTION ==========
+            logger.info(f"Orchestrator: Starting Agent 1 (DataCollector) for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 1 (DataCollector) starting...")
             update_application_agent_output(application_id, {
                 "processing_status": "step1_data_collection",
@@ -273,7 +308,9 @@ class OrchestratorAgent:
             })
             
             data_collection = self.data_collector.analyze(applicant)
+            logger.info(f"Orchestrator: Agent 1 (DataCollector) completed for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 1 (DataCollector) completed")
+            logger.debug(f"Orchestrator: Updating agent_output with data_collection results")
             update_application_agent_output(application_id, {
                 "processing_status": "step1_data_collection",
                 "progress": progress,
@@ -281,6 +318,7 @@ class OrchestratorAgent:
             })
             
             # ========== AGENT 2: RISK ASSESSMENT ==========
+            logger.info(f"Orchestrator: Starting Agent 2 (RiskAssessor) for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 2 (RiskAssessor) starting...")
             update_application_agent_output(application_id, {
                 "processing_status": "step2_risk_assessment",
@@ -289,7 +327,9 @@ class OrchestratorAgent:
             })
             
             risk_assessment = self.risk_assessor.assess(applicant, data_collection)
+            logger.info(f"Orchestrator: Agent 2 (RiskAssessor) completed for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 2 (RiskAssessor) completed")
+            logger.debug(f"Orchestrator: Updating agent_output with risk_assessment results")
             update_application_agent_output(application_id, {
                 "processing_status": "step2_risk_assessment",
                 "progress": progress,
@@ -298,6 +338,7 @@ class OrchestratorAgent:
             })
             
             # ========== AGENT 3: DECISION MAKING ==========
+            logger.info(f"Orchestrator: Starting Agent 3 (DecisionMaker) for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 3 (DecisionMaker) starting...")
             update_application_agent_output(application_id, {
                 "processing_status": "step3_decision",
@@ -307,7 +348,9 @@ class OrchestratorAgent:
             })
             
             final_decision = self.decision_maker.decide(applicant, risk_assessment)
+            logger.info(f"Orchestrator: Agent 3 (DecisionMaker) completed for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 3 (DecisionMaker) completed")
+            logger.debug(f"Orchestrator: Updating agent_output with final_decision results")
             update_application_agent_output(application_id, {
                 "processing_status": "step3_decision",
                 "progress": progress,
@@ -317,6 +360,7 @@ class OrchestratorAgent:
             })
             
             # ========== AGENT 4: AUDIT ==========
+            logger.info(f"Orchestrator: Starting Agent 4 (Auditor) for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 4 (Auditor) starting...")
             update_application_agent_output(application_id, {
                 "processing_status": "step4_audit",
@@ -327,6 +371,7 @@ class OrchestratorAgent:
             })
             
             audit_report = self.auditor.audit(applicant, data_collection, risk_assessment, final_decision)
+            logger.info(f"Orchestrator: Agent 4 (Auditor) completed for id={application_id}")
             progress.append(f"[{datetime.now().isoformat()}] Agent 4 (Auditor) completed")
             
             # Compile final result
@@ -343,6 +388,7 @@ class OrchestratorAgent:
             }
             
             # Update database
+            logger.debug(f"Orchestrator: Updating agent_output with final result for id={application_id}")
             update_application_agent_output(application_id, result)
             
             # Set final status
@@ -362,13 +408,20 @@ class OrchestratorAgent:
                 confidence = None
                 reason = "Could not parse decision"
             
+            logger.info(f"Orchestrator: Setting final status for id={application_id}: {status} (confidence={confidence})")
+            logger.debug(f"Orchestrator: Updating application_status to {status}")
             update_application_status(application_id, status, reason=reason, confidence=confidence)
+            logger.info(f"Orchestrator: Successfully completed processing for id={application_id}")
             
             return {"result": result}
             
         except Exception as e:
-            logger.exception(f"Orchestrator failed: {e}")
-            update_application_status(application_id, "ERROR", reason=str(e))
+            logger.exception(f"Orchestrator failed for id={application_id}: {e}")
+            try:
+                logger.debug(f"Orchestrator: Attempting to update status to ERROR for id={application_id}")
+                update_application_status(application_id, "ERROR", reason=str(e))
+            except Exception as update_err:
+                logger.error(f"Orchestrator: Failed to update status to ERROR: {update_err}")
             return {"error": "orchestration_failed", "message": str(e)}
 
 
