@@ -137,12 +137,18 @@ try:
     logger.debug(f"UI: list_applications returned response of length {len(all_apps) if isinstance(all_apps, str) else 'N/A'}")
     if all_apps:
         apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
+        
+        # Ensure apps_list is a list
+        if not isinstance(apps_list, list):
+            apps_list = [apps_list] if apps_list else []
+        
         logger.debug(f"UI: Parsed {len(apps_list)} applications from quick stats query")
         
         total = len(apps_list)
-        approved = sum(1 for a in apps_list if a.get("application_status") == "APPROVE")
-        denied = sum(1 for a in apps_list if a.get("application_status") == "DENY")
-        pending = sum(1 for a in apps_list if a.get("application_status") == "REFER")
+        # Safe counting with type checking
+        approved = sum(1 for a in apps_list if isinstance(a, dict) and a.get("application_status") == "APPROVE")
+        denied = sum(1 for a in apps_list if isinstance(a, dict) and a.get("application_status") == "DENY")
+        pending = sum(1 for a in apps_list if isinstance(a, dict) and a.get("application_status") == "REFER")
         
         st.sidebar.metric("Total Apps", total)
         st.sidebar.metric("✅ Approved", approved)

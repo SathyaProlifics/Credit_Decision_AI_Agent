@@ -57,7 +57,10 @@ def _get_aws_secrets() -> Dict[str, str]:
         return {}
     
     try:
-        client = boto3.client('secretsmanager')
+        # Get region from environment or default to us-east-1
+        region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
+        logger.debug(f"Creating boto3 secretsmanager client for region: {region}")
+        client = boto3.client('secretsmanager', region_name=region)
         logger.debug(f"Fetching secret from AWS Secrets Manager: {AWS_SECRET_NAME}")
         response = client.get_secret_value(SecretId=AWS_SECRET_NAME)
         
