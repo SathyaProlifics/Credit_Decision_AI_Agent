@@ -95,11 +95,7 @@ col1, col2 = st.columns([0.8, 0.2])
 with col1:
     st.title("🤖 OrchestrateAI Credit Decision Agent")
     st.markdown("*Multi-agent AI system powered by AWS Bedrock*")
-with col2:
-    st.markdown("")
-    st.markdown("")
-    if st.button("🌙 Settings"):
-        st.session_state.show_settings = not st.session_state.get("show_settings", False)
+
 
 # ==================== LEFT PANE: SIDEBAR FORM ====================
 st.sidebar.header("📝 Applicant Information")
@@ -141,10 +137,11 @@ try:
     if all_apps:
         apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
         logger.debug(f"UI: Parsed {len(apps_list)} applications from quick stats query")
+        
         total = len(apps_list)
-        approved = sum(1 for a in apps_list if a.get("decision") == "APPROVED")
-        denied = sum(1 for a in apps_list if a.get("decision") == "DENIED")
-        pending = sum(1 for a in apps_list if a.get("decision") == "PENDING")
+        approved = sum(1 for a in apps_list if a.get("application_status") == "APPROVE")
+        denied = sum(1 for a in apps_list if a.get("application_status") == "DENY")
+        pending = sum(1 for a in apps_list if a.get("application_status") == "REFER")
         
         st.sidebar.metric("Total Apps", total)
         st.sidebar.metric("✅ Approved", approved)
@@ -408,13 +405,6 @@ else:
     - 🔍 **Fully Auditable**: Complete decision reasoning and compliance tracking
     """)
 
-    col1, col2 = st.columns([3, 1])
-    with col1:
-        st.subheader("🎯 Quick Start")
-        st.markdown("Try with the sample data already loaded in the form")
-    with col2:
-        if st.button("Load Sample", use_container_width=True):
-            st.rerun()
 
 # ==================== FOOTER ====================
 st.markdown("---")

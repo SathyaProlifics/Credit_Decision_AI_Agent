@@ -231,7 +231,7 @@ def list_applications(limit: int = 10) -> str:
 
     try:
         with conn.cursor() as cur:
-            sql = "SELECT * FROM credit_applications ORDER BY created_at DESC LIMIT %s"
+            sql = "SELECT * FROM credit_applications ORDER BY id DESC LIMIT %s"
             logger.debug(f"list_applications: Executing query with limit={limit}")
             query_start = time.time()
             cur.execute(sql, (limit,))
