@@ -2,6 +2,7 @@ import os
 import json
 import boto3
 import logging
+import time
 from datetime import datetime
 from typing import Any, Dict
 from bedrock_agentcore._utils import endpoints
@@ -119,28 +120,35 @@ Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category 
     
     def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
         """Call Bedrock Claude model"""
-        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
+        logger.info(f"{self.name} AGENT: Starting Bedrock invocation with model {self.model_id}")
+        start_time = time.time()
         try:
             client = boto3.client("bedrock-runtime", region_name=region)
             body = json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1500,
+                "max_tokens": 1500 if self.name != "DataCollector" else 1000,
                 "temperature": 0.3,
                 "messages": [{"role": "user", "content": prompt}]
             })
-            logger.debug(f"{self.name} agent: Sending request to Bedrock")
+            logger.debug(f"{self.name} AGENT: Request body prepared ({len(body)} bytes), invoking Bedrock")
+            invoke_start = time.time()
             response = client.invoke_model(modelId=self.model_id, body=body)
+            invoke_elapsed = time.time() - invoke_start
+            
             text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
-            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
+            logger.debug(f"{self.name} AGENT: Received Bedrock response ({len(text)} chars, API time={invoke_elapsed:.2f}s)")
+            
             try:
                 result = json.loads(text)
-                logger.info(f"{self.name} agent: Successfully parsed JSON response")
+                total_elapsed = time.time() - start_time
+                logger.info(f"{self.name} AGENT: Successfully parsed JSON (total time={total_elapsed:.2f}s)")
                 return result
             except Exception as e:
-                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
-                return {"analysis": text, "format": "text"}
+                logger.warning(f"{self.name} AGENT: Failed to parse JSON response: {e}. Returning raw text.")
+                return {"analysis": text, "format": "text", "agent": self.name}
         except Exception as e:
-            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
+            total_elapsed = time.time() - start_time
+            logger.error(f"{self.name} AGENT: FAILED after {total_elapsed:.2f}s: {type(e).__name__}: {e}", exc_info=True)
             return {"error": str(e), "agent": self.name}
 
 

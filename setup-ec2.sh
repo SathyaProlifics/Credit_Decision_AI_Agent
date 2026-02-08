@@ -96,16 +96,23 @@ deactivate
 
 echo -e "${GREEN}OK${NC}"
 
-# Step 6: Create environment variables
-echo -e "${YELLOW}[6/8] Creating .env file...${NC}"
-cat > $APP_DIR/.env << 'EOF'
-# Database Configuration
+# Step 6: Create environment variables and resource properties
+echo -e "${YELLOW}[6/8] Creating resource/properties and .env files...${NC}"
+
+# Ensure resource directory exists and write DB secrets to a single properties file
+mkdir -p $APP_DIR/resource
+cat > $APP_DIR/resource/properties << 'EOF'
 DB_HOST=sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com
 DB_PORT=3306
 DB_USER=admin
 DB_PASSWORD=za*~[VF7v>rgCMg6mCWc_S9JS*ZG
 DB_NAME=dev
+EOF
 
+chmod 600 $APP_DIR/resource/properties
+
+# Create .env with non-database settings; DB values are stored in resource/properties
+cat > $APP_DIR/.env << 'EOF'
 # Logging
 CREDIT_DECISION_LOG=/var/log/credit_decision.log
 
@@ -184,6 +191,8 @@ After=network.target
 Type=simple
 User=ubuntu
 WorkingDirectory=$APP_DIR
+# Load DB credentials from resource/properties first, then other envs from .env
+EnvironmentFile=$APP_DIR/resource/properties
 EnvironmentFile=$APP_DIR/.env
 ExecStart=$VENV_DIR/bin/streamlit run credit_decision_ui.py --server.port=8501 --server.headless=true --logger.level=info
 Restart=always

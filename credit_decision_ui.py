@@ -176,26 +176,33 @@ if submitted:
         "agent_output": {},
     }
 
-    logger.info(f"UI: Application submission received - applicant: {name}, requested_credit: ${requested_credit}")
+    logger.info(f"UI: Application submission START - applicant={name}, credit_score={credit_score}, requested_credit=${requested_credit}, dti={dti_ratio:.2f}")
+    start_time = time.time()
+    
     with st.spinner("🤖 Processing application through AI agents..."):
         try:
             # persist initial application record
-            logger.debug(f"UI: Inserting application into database for {name}")
+            logger.debug(f"UI: Inserting application record for {name} into database")
             insert_resp = insert_application(applicant_data)
-            logger.debug(f"UI: insert_application response: {insert_resp}")
+            logger.debug(f"UI: insert_application response received, parsing...")
             try:
                 insert_obj = json.loads(insert_resp)
                 app_id = insert_obj.get("inserted_id")
-                logger.info(f"UI: Successfully inserted application with id={app_id}")
+                if app_id:
+                    logger.info(f"UI: Application inserted successfully - id={app_id}")
+                else:
+                    logger.error(f"UI: No inserted_id in response: {insert_obj}")
+                    app_id = None
             except Exception as e:
                 logger.error(f"UI: Failed to parse insert response: {e}", exc_info=True)
                 app_id = None
 
             if app_id:
                 st.info(f"Saved application to DB (id={app_id}) - processing...")
-                logger.info(f"UI: Displaying application saved message, id={app_id}")
+                logger.info(f"UI: Database save confirmed, id={app_id}, proceeding with agent orchestration")
             else:
-                logger.error(f"UI: Failed to get application ID from insert response")
+                logger.error(f"UI: Failed to get application ID from insert response - aborting")
+                st.error("Failed to save application to database")
 
             # Initialize agent and run orchestration
             agent = None
