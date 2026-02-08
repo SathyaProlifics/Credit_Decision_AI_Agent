@@ -178,6 +178,7 @@ if submitted:
 
     logger.info(f"UI: Application submission START - applicant={name}, credit_score={credit_score}, requested_credit=${requested_credit}, dti={dti_ratio:.2f}")
     start_time = time.time()
+    status_placeholder = None  # Initialize placeholder
     
     with st.spinner("🤖 Processing application through AI agents..."):
         try:
@@ -198,7 +199,9 @@ if submitted:
                 app_id = None
 
             if app_id:
-                st.info(f"Saved application to DB (id={app_id}) - processing...")
+                # Create placeholder for status message (will be cleared after processing)
+                status_placeholder = st.empty()
+                status_placeholder.info(f"Starting processing for application (id={app_id})...")
                 logger.info(f"UI: Database save confirmed, id={app_id}, proceeding with agent orchestration")
             else:
                 logger.error(f"UI: Failed to get application ID from insert response - aborting")
@@ -248,7 +251,12 @@ if submitted:
                                 logger.error(f"UI: Failed to parse agent_output: {parse_err}", exc_info=True)
                                 parsed = agent_out
                             try:
-                                placeholder.json(parsed)
+                                # Display only progress element from JSON
+                                progress_data = parsed.get("progress") if isinstance(parsed, dict) else None
+                                if progress_data:
+                                    placeholder.json(progress_data)
+                                else:
+                                    placeholder.text("Processing... (waiting for progress data)")
                             except Exception as display_err:
                                 logger.error(f"UI: Failed to display JSON: {display_err}", exc_info=True)
                                 placeholder.text(str(parsed)[:2000])
@@ -283,6 +291,11 @@ if submitted:
 
             # Display results
             logger.info(f"UI: Displaying application results for app_id={app_id}")
+            
+            # Clear the initial status message
+            if status_placeholder:
+                status_placeholder.empty()
+            
             st.success("✅ Application processed successfully!")
 
             final_decision = result.get('final_decision') if isinstance(result, dict) else None
