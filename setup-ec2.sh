@@ -104,9 +104,7 @@ mkdir -p $APP_DIR/resource
 cat > $APP_DIR/resource/properties << 'EOF'
 DB_HOST=sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com
 DB_PORT=3306
-DB_USER=admin
-DB_PASSWORD=za*~[VF7v>rgCMg6mCWc_S9JS*ZG
-DB_NAME=dev
+
 EOF
 
 chmod 600 $APP_DIR/resource/properties

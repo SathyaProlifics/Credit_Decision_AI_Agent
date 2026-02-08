@@ -1,8 +1,10 @@
 DB_HOST=sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com
 DB_PORT=3306
-DB_USER=admin
-DB_PASSWORD=gAwcZC_[zNd[:1qTsV|HTTvFP>W2
 DB_NAME=dev
 
-# Copy this file to `resource/properties` and fill in real values.
-# Keep this file out of version control if it contains secrets.
+# IMPORTANT: Database credentials are now managed via AWS Secrets Manager
+# Secret Name: rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086
+# 
+# Note: DB_USER and DB_PASSWORD should NOT be stored in this file for security reasons.
+# The application will automatically fetch credentials from AWS Secrets Manager.
+# If AWS Secrets Manager is unavailable, set DB_USER and DB_PASSWORD as environment variables.

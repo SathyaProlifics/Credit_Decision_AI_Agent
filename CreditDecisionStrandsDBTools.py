@@ -3,14 +3,19 @@
 Provides `@tool` wrappers that the Strands agent or UI can call to persist
 and query credit application data.
 
-Environment variables used:
-- DB_HOST (optional)
-- DB_USER (required)
-- DB_PASSWORD (required)
+Credentials are fetched in the following priority order:
+1. AWS Secrets Manager (secret name: rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086)
+2. resource/properties file (if present)
+3. Environment variables
+
+Environment variables supported:
+- DB_HOST (optional, defaults to sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com)
+- DB_USER (required if not in AWS Secrets Manager)
+- DB_PASSWORD (required if not in AWS Secrets Manager)
 - DB_NAME (optional, defaults to "dev")
 - DB_PORT (optional, defaults to 3306)
 
-Ensure `PyMySQL` is installed in the project's environment.
+Ensure `PyMySQL` and `boto3` are installed in the project's environment.
 """
 
 from strands import tool
@@ -30,8 +35,49 @@ except Exception as e:
     logger.error(f"Failed to import pymysql: {e}")
     pymysql = None
 
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+except Exception as e:
+    logger.warning(f"Failed to import boto3: {e}")
+    boto3 = None
+
 # Default host used previously in this workspace
 DEFAULT_HOST = "sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com"
+AWS_SECRET_NAME = "rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086"
+
+
+def _get_aws_secrets() -> Dict[str, str]:
+    """Fetch RDS credentials from AWS Secrets Manager.
+    
+    Returns a dict with 'username' and 'password' keys, or empty dict if not available.
+    """
+    if not boto3:
+        logger.debug("boto3 not available, skipping AWS Secrets Manager")
+        return {}
+    
+    try:
+        client = boto3.client('secretsmanager')
+        logger.debug(f"Fetching secret from AWS Secrets Manager: {AWS_SECRET_NAME}")
+        response = client.get_secret_value(SecretId=AWS_SECRET_NAME)
+        
+        if 'SecretString' in response:
+            secret = json.loads(response['SecretString'])
+            logger.info(f"Successfully retrieved secret from AWS Secrets Manager")
+            return {
+                'username': secret.get('username'),
+                'password': secret.get('password')
+            }
+        else:
+            logger.warning("Secret retrieved but no SecretString found")
+            return {}
+    except ClientError as e:
+        error_code = e.response['Error']['Code']
+        logger.warning(f"Failed to retrieve secret from AWS Secrets Manager (error={error_code}): {e}")
+        return {}
+    except Exception as e:
+        logger.warning(f"Unexpected error fetching AWS secrets: {type(e).__name__}: {e}")
+        return {}
 
 
 def _get_db_conn():
@@ -39,13 +85,22 @@ def _get_db_conn():
         logger.error("PyMySQL is not installed in the environment")
         raise RuntimeError("PyMySQL is not installed in the environment")
 
-    # Try loading DB settings from resource/properties file first, then fall back to environment
+    # Try loading DB settings from AWS Secrets Manager first, then resource/properties, then environment
     logger.debug("Loading DB configuration...")
+    
+    # Try AWS Secrets Manager first
+    aws_creds = _get_aws_secrets()
+    user = aws_creds.get('username')
+    password = aws_creds.get('password')
+    
+    # Fall back to resource/properties and environment variables
     props = _load_resource_properties()
+    if not user:
+        user = props.get("DB_USER") or os.getenv("DB_USER")
+    if not password:
+        password = props.get("DB_PASSWORD") or os.getenv("DB_PASSWORD")
 
     host = props.get("DB_HOST") or os.getenv("DB_HOST") or DEFAULT_HOST
-    user = props.get("DB_USER") or os.getenv("DB_USER")
-    password = props.get("DB_PASSWORD") or os.getenv("DB_PASSWORD")
     db = props.get("DB_NAME") or os.getenv("DB_NAME") or "dev"
     try:
         port = int(props.get("DB_PORT") or os.getenv("DB_PORT") or "3306")
@@ -58,7 +113,7 @@ def _get_db_conn():
     if not user or not password:
         logger.error("Database credentials not set: DB_USER or DB_PASSWORD missing")
         logger.error(f"  user={user}, password_set={bool(password)}")
-        raise RuntimeError("Database credentials not set. Please set DB_USER and DB_PASSWORD in resource/properties or environment variables.")
+        raise RuntimeError("Database credentials not set. Please set credentials in AWS Secrets Manager, resource/properties, or environment variables.")
 
     try:
         logger.info(f"Attempting database connection to {db}@{host}:{port}")
@@ -120,8 +175,8 @@ def insert_application(app: Dict[str, Any]) -> str:
     """Insert a credit application record.
 
     Expects a dict with keys matching the credit_applications table (e.g.:
-    applicant_name, applicant_dob, age, income, employment_status, credit_score,
-    dti_ratio, existing_debts, requested_credit, source, agent_output)
+    applicant_name, applicant_dob, age, email, income, employment_status, credit_score,
+    dti_ratio, existing_debts, requested_credit, source, application_status, agent_output)
 
     Returns JSON with inserted id or error.
     """

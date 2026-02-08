@@ -105,6 +105,7 @@ with st.sidebar.form("applicant_form"):
     st.subheader("Personal Info")
     name = st.text_input("Full Name", value="John Smith")
     age = st.number_input("Age", min_value=18, max_value=100, value=35)
+    email = st.text_input("Email ID", value="john.smith@email.com")
 
     st.subheader("Financial Info")
     income = st.number_input("Annual Income ($)", min_value=0, value=75000, step=1000)
@@ -162,6 +163,7 @@ if submitted:
     applicant_data = {
         "applicant_name": name,
         "age": age,
+        "email": email,
         "income": income,
         "employment_status": employment,
         "credit_score": credit_score,
