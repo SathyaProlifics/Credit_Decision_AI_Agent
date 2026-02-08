@@ -387,4 +387,4 @@ def update_application_agent_output(application_id: int, agent_output: Any) -> s
             conn.close()
             logger.debug(f"update_application_agent_output: Connection closed for id={application_id}")
         except Exception as e:
-            logger.warning(f"update_application_agent_output: Error closing connection for id={application_id}: {e}"}
+            logger.warning(f"update_application_agent_output: Error closing connection for id={application_id}")
