@@ -10,9 +10,15 @@ from bedrock_agentcore._utils import endpoints
 from strands import tool, Agent
 from strands.models import BedrockModel
 
+# Import LLM provider abstraction layer
+from LLMProvider import ModelConfig, LLMFactory, ModelConfigManager
+
 region = boto3.session.Session().region_name or "us-east-1"
 logger = logging.getLogger("credit_decision_agent")
 logger.setLevel(logging.DEBUG)  # Ensure DEBUG level is set
+
+# Initialize model config manager
+config_manager = ModelConfigManager()
 
 # Import DB tools (these are `@tool` wrappers but callable as functions)
 from CreditDecisionStrandsDBTools import (
@@ -29,8 +35,9 @@ class DataCollectorAgent:
     """Independent Agent 1: Focuses on data collection and completeness"""
     
     def __init__(self):
-        self.model_id = "anthropic.claude-3-haiku-20240307-v1:0"  # Efficient for data collection
         self.name = "DataCollector"
+        self.config = config_manager.get_config(self.name)
+        logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
     def analyze(self, applicant: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze applicant data completeness and quality"""
@@ -67,41 +74,34 @@ Requested Credit: ${requested_credit_f:,.2f}
 
 Provide analysis in JSON with: data_completeness_score, quality_assessment, key_risk_indicators, positive_factors, missing_data_recommendations, profile_summary."""
 
-        return self._invoke_bedrock(prompt)
+        return self._invoke_llm(prompt)
     
-    def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
-        """Call Bedrock Claude model"""
-        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
-        try:
-            client = boto3.client("bedrock-runtime", region_name=region)
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1000,
-                "temperature": 0.3,
-                "messages": [{"role": "user", "content": prompt}]
-            })
-            logger.debug(f"{self.name} agent: Sending request to Bedrock")
-            response = client.invoke_model(modelId=self.model_id, body=body)
-            text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
-            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
-            try:
-                result = json.loads(text)
-                logger.info(f"{self.name} agent: Successfully parsed JSON response")
-                return result
-            except Exception as e:
-                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
-                return {"analysis": text, "format": "text"}
-        except Exception as e:
-            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
-            return {"error": str(e), "agent": self.name}
+    def _invoke_llm(self, prompt: str) -> Dict[str, Any]:
+        """Call LLM using provider abstraction"""
+        logger.debug(f"{self.name} agent: Invoking {self.config.provider}/{self.config.model_id}")
+        response = LLMFactory.invoke(prompt, self.config)
+        
+        if "error" in response:
+            logger.error(f"{self.name} agent failed: {response['error']}")
+            return response
+        
+        # If response has parsed_json, extract it
+        if "parsed_json" in response:
+            logger.info(f"{self.name} agent: Successfully parsed JSON response")
+            return response["parsed_json"]
+        
+        # Otherwise return the text field
+        logger.info(f"{self.name} agent: Returning text response")
+        return {"analysis": response.get("text", ""), "format": "text"}
 
 
 class RiskAssessorAgent:
     """Independent Agent 2: Focuses on credit risk assessment"""
     
     def __init__(self):
-        self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"  # More capable for analysis
         self.name = "RiskAssessor"
+        self.config = config_manager.get_config(self.name)
+        logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
     def assess(self, applicant: Dict[str, Any], collected_data: Dict[str, Any]) -> Dict[str, Any]:
         """Assess credit risk"""
@@ -116,48 +116,35 @@ COLLECTED DATA ANALYSIS:
 
 Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category (Low/Medium/High/Very High), key_risk_factors, mitigating_factors, recommended_credit_limit, suggested_interest_rate_range."""
 
-        return self._invoke_bedrock(prompt)
+        return self._invoke_llm(prompt)
     
-    def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
-        """Call Bedrock Claude model"""
-        logger.info(f"{self.name} AGENT: Starting Bedrock invocation with model {self.model_id}")
+    def _invoke_llm(self, prompt: str) -> Dict[str, Any]:
+        """Call LLM using provider abstraction"""
+        logger.info(f"{self.name} AGENT: Starting invocation with {self.config.provider}/{self.config.model_id}")
         start_time = time.time()
-        try:
-            client = boto3.client("bedrock-runtime", region_name=region)
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 1500 if self.name != "DataCollector" else 1000,
-                "temperature": 0.3,
-                "messages": [{"role": "user", "content": prompt}]
-            })
-            logger.debug(f"{self.name} AGENT: Request body prepared ({len(body)} bytes), invoking Bedrock")
-            invoke_start = time.time()
-            response = client.invoke_model(modelId=self.model_id, body=body)
-            invoke_elapsed = time.time() - invoke_start
-            
-            text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
-            logger.debug(f"{self.name} AGENT: Received Bedrock response ({len(text)} chars, API time={invoke_elapsed:.2f}s)")
-            
-            try:
-                result = json.loads(text)
-                total_elapsed = time.time() - start_time
-                logger.info(f"{self.name} AGENT: Successfully parsed JSON (total time={total_elapsed:.2f}s)")
-                return result
-            except Exception as e:
-                logger.warning(f"{self.name} AGENT: Failed to parse JSON response: {e}. Returning raw text.")
-                return {"analysis": text, "format": "text", "agent": self.name}
-        except Exception as e:
-            total_elapsed = time.time() - start_time
-            logger.error(f"{self.name} AGENT: FAILED after {total_elapsed:.2f}s: {type(e).__name__}: {e}", exc_info=True)
-            return {"error": str(e), "agent": self.name}
+        response = LLMFactory.invoke(prompt, self.config)
+        total_elapsed = time.time() - start_time
+        
+        if "error" in response:
+            logger.error(f"{self.name} AGENT: FAILED after {total_elapsed:.2f}s: {response['error']}")
+            return response
+        
+        # If response has parsed_json, extract it
+        if "parsed_json" in response:
+            logger.info(f"{self.name} AGENT: Successfully parsed JSON (total time={total_elapsed:.2f}s)")
+            return response["parsed_json"]
+        
+        logger.info(f"{self.name} AGENT: Returning text response (total time={total_elapsed:.2f}s)")
+        return {"analysis": response.get("text", ""), "format": "text", "agent": self.name}
 
 
 class DecisionMakerAgent:
     """Independent Agent 3: Focuses on making approval/denial decisions"""
     
     def __init__(self):
-        self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"  # Advanced reasoning
         self.name = "DecisionMaker"
+        self.config = config_manager.get_config(self.name)
+        logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
     def decide(self, applicant: Dict[str, Any], risk_assessment: Dict[str, Any]) -> Dict[str, Any]:
         """Make final credit decision"""
@@ -178,41 +165,33 @@ For all decisions include: confidence (1-100), detailed_reasoning.
 
 Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate, term_length_months, conditions, confidence, detailed_reasoning."""
 
-        return self._invoke_bedrock(prompt)
+        return self._invoke_llm(prompt)
     
-    def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
-        """Call Bedrock Claude model"""
-        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
-        try:
-            client = boto3.client("bedrock-runtime", region_name=region)
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 2000,
-                "temperature": 0.2,
-                "messages": [{"role": "user", "content": prompt}]
-            })
-            logger.debug(f"{self.name} agent: Sending request to Bedrock")
-            response = client.invoke_model(modelId=self.model_id, body=body)
-            text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
-            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
-            try:
-                result = json.loads(text)
-                logger.info(f"{self.name} agent: Successfully parsed decision response")
-                return result
-            except Exception as e:
-                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
-                return {"analysis": text, "format": "text"}
-        except Exception as e:
-            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
-            return {"error": str(e), "agent": self.name}
+    def _invoke_llm(self, prompt: str) -> Dict[str, Any]:
+        """Call LLM using provider abstraction"""
+        logger.debug(f"{self.name} agent: Invoking {self.config.provider}/{self.config.model_id}")
+        response = LLMFactory.invoke(prompt, self.config)
+        
+        if "error" in response:
+            logger.exception(f"{self.name} agent failed: {response['error']}")
+            return response
+        
+        # If response has parsed_json, extract it
+        if "parsed_json" in response:
+            logger.info(f"{self.name} agent: Successfully parsed decision response")
+            return response["parsed_json"]
+        
+        logger.info(f"{self.name} agent: Returning text response")
+        return {"analysis": response.get("text", ""), "format": "text"}
 
 
 class AuditAgent:
     """Independent Agent 4: Focuses on compliance and audit"""
     
     def __init__(self):
-        self.model_id = "anthropic.claude-3-sonnet-20240229-v1:0"  # Thorough analysis
         self.name = "Auditor"
+        self.config = config_manager.get_config(self.name)
+        logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
     def audit(self, applicant: Dict[str, Any], collected_data: Dict[str, Any], 
               risk_assessment: Dict[str, Any], final_decision: Dict[str, Any]) -> Dict[str, Any]:
@@ -235,33 +214,24 @@ FINAL DECISION:
 
 Provide comprehensive audit report in JSON with: audit_compliance_score (1-100), compliance_issues (list), regulatory_flags, recommendations, audit_trail_summary, decision_justification_strength."""
 
-        return self._invoke_bedrock(prompt)
+        return self._invoke_llm(prompt)
     
-    def _invoke_bedrock(self, prompt: str) -> Dict[str, Any]:
-        """Call Bedrock Claude model"""
-        logger.debug(f"{self.name} agent: Invoking Bedrock with model {self.model_id}")
-        try:
-            client = boto3.client("bedrock-runtime", region_name=region)
-            body = json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 2000,
-                "temperature": 0.2,
-                "messages": [{"role": "user", "content": prompt}]
-            })
-            logger.debug(f"{self.name} agent: Sending request to Bedrock")
-            response = client.invoke_model(modelId=self.model_id, body=body)
-            text = json.loads(response["body"].read()).get("content", [])[0].get("text", "")
-            logger.debug(f"{self.name} agent: Received response from Bedrock (length: {len(text)})")
-            try:
-                result = json.loads(text)
-                logger.info(f"{self.name} agent: Successfully parsed audit report")
-                return result
-            except Exception as e:
-                logger.warning(f"{self.name} agent: Failed to parse JSON response: {e}")
-                return {"analysis": text, "format": "text"}
-        except Exception as e:
-            logger.exception(f"{self.name} agent failed during Bedrock invocation: {e}")
-            return {"error": str(e), "agent": self.name}
+    def _invoke_llm(self, prompt: str) -> Dict[str, Any]:
+        """Call LLM using provider abstraction"""
+        logger.debug(f"{self.name} agent: Invoking {self.config.provider}/{self.config.model_id}")
+        response = LLMFactory.invoke(prompt, self.config)
+        
+        if "error" in response:
+            logger.exception(f"{self.name} agent failed: {response['error']}")
+            return response
+        
+        # If response has parsed_json, extract it
+        if "parsed_json" in response:
+            logger.info(f"{self.name} agent: Successfully parsed audit report")
+            return response["parsed_json"]
+        
+        logger.info(f"{self.name} agent: Returning text response")
+        return {"analysis": response.get("text", ""), "format": "text"}
 
 
 class OrchestratorAgent:
