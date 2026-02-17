@@ -35,7 +35,7 @@ class DataCollectorAgent:
     """Independent Agent 1: Focuses on data collection and completeness"""
     
     def __init__(self):
-        self.name = "DataCollector"
+        self.name = "DATA_COLLECTOR"
         self.config = config_manager.get_config(self.name)
         logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
@@ -99,7 +99,7 @@ class RiskAssessorAgent:
     """Independent Agent 2: Focuses on credit risk assessment"""
     
     def __init__(self):
-        self.name = "RiskAssessor"
+        self.name = "RISK_ASSESSOR"
         self.config = config_manager.get_config(self.name)
         logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
@@ -142,7 +142,7 @@ class DecisionMakerAgent:
     """Independent Agent 3: Focuses on making approval/denial decisions"""
     
     def __init__(self):
-        self.name = "DecisionMaker"
+        self.name = "DECISION_MAKER"
         self.config = config_manager.get_config(self.name)
         logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
@@ -189,7 +189,7 @@ class AuditAgent:
     """Independent Agent 4: Focuses on compliance and audit"""
     
     def __init__(self):
-        self.name = "Auditor"
+        self.name = "AUDITOR"
         self.config = config_manager.get_config(self.name)
         logger.debug(f"{self.name} agent initialized with config: provider={self.config.provider}, model={self.config.model_id}")
         
