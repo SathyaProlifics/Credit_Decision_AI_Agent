@@ -3,19 +3,17 @@
 Provides `@tool` wrappers that the Strands agent or UI can call to persist
 and query credit application data.
 
-Credentials are fetched in the following priority order:
-1. AWS Secrets Manager (secret name: rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086)
-2. resource/properties file (if present)
-3. Environment variables
+This version calls AWS Lambda functions via API Gateway for all database operations.
 
-Environment variables supported:
-- DB_HOST (optional, defaults to sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com)
-- DB_USER (required if not in AWS Secrets Manager)
-- DB_PASSWORD (required if not in AWS Secrets Manager)
-- DB_NAME (optional, defaults to "dev")
-- DB_PORT (optional, defaults to 3306)
+Environment variables:
+- API_BASE_URL: API Gateway endpoint URL (required if USE_LAMBDA=true)
+- API_KEY: API key for authentication (optional)
+- USE_LAMBDA: Set to "true" to use Lambda (default: "true")
 
-Ensure `PyMySQL` and `boto3` are installed in the project's environment.
+For direct database access (fallback), use:
+- DB_HOST, DB_USER, DB_PASSWORD, DB_NAME, DB_PORT
+- AWS Secrets Manager (secret name: rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086)
+- resource/properties file
 """
 
 from strands import tool
@@ -29,6 +27,15 @@ from typing import List, Dict, Any, Optional
 logger = logging.getLogger("credit_decision_db")
 logger.setLevel(logging.DEBUG)  # Ensure DEBUG level is set
 
+# Try to import Lambda API client (primary)
+try:
+    from LambdaAPIClient import LambdaAPIClient, should_use_lambda
+    LAMBDA_CLIENT_AVAILABLE = True
+except ImportError:
+    logger.warning("LambdaAPIClient not available, will attempt direct DB connection")
+    LAMBDA_CLIENT_AVAILABLE = False
+
+# Fallback to direct database access
 try:
     import pymysql
 except Exception as e:
@@ -45,6 +52,25 @@ except Exception as e:
 # Default host used previously in this workspace
 DEFAULT_HOST = "sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com"
 AWS_SECRET_NAME = "rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086"
+
+# Global Lambda client instance
+_lambda_client: Optional[LambdaAPIClient] = None
+
+
+def _get_lambda_client() -> Optional[LambdaAPIClient]:
+    """Get or create Lambda API client if available."""
+    global _lambda_client
+    if not LAMBDA_CLIENT_AVAILABLE:
+        return None
+    if _lambda_client is None:
+        try:
+            _lambda_client = LambdaAPIClient()
+            logger.info("Lambda client initialized successfully")
+        except Exception as e:
+            logger.warning(f"Failed to initialize Lambda client: {e}")
+            _lambda_client = False  # Cache the failure
+            return None
+    return _lambda_client if _lambda_client is not False else None
 
 
 def _get_aws_secrets() -> Dict[str, str]:
@@ -185,6 +211,19 @@ def insert_application(app: Dict[str, Any]) -> str:
     """
     logger.info(f"insert_application: Starting with keys={list(app.keys())}")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.insert_application(app)
+            elapsed = time.time() - start_time
+            logger.info(f"insert_application: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"insert_application: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -224,7 +263,7 @@ def insert_application(app: Dict[str, Any]) -> str:
             
             inserted_id = cur.lastrowid
             total_elapsed = time.time() - start_time
-            logger.info(f"insert_application: SUCCESS id={inserted_id} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"insert_application: Direct DB SUCCESS id={inserted_id} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return json.dumps({"inserted_id": inserted_id})
     except Exception as e:
         logger.error(f"insert_application: FAILED after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
@@ -242,6 +281,19 @@ def get_application(application_id: int) -> str:
     """Return a single application row by `application_id` as JSON."""
     logger.info(f"get_application: Looking up id={application_id}")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.get_application(application_id)
+            elapsed = time.time() - start_time
+            logger.info(f"get_application: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"get_application: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -263,7 +315,7 @@ def get_application(application_id: int) -> str:
             
             fields_count = len(row) if row else 0
             total_elapsed = time.time() - start_time
-            logger.info(f"get_application: SUCCESS id={application_id} fields={fields_count} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"get_application: Direct DB SUCCESS id={application_id} fields={fields_count} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return json.dumps(row, default=str, indent=2)
     except Exception as e:
         logger.error(f"get_application: FAILED for id={application_id} after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
@@ -281,6 +333,19 @@ def list_applications(limit: int = 10) -> str:
     """Return up to `limit` applications ordered by `created_at` desc."""
     logger.info(f"list_applications: Starting with limit={limit}")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.list_applications(limit)
+            elapsed = time.time() - start_time
+            logger.info(f"list_applications: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"list_applications: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -297,7 +362,7 @@ def list_applications(limit: int = 10) -> str:
             query_elapsed = time.time() - query_start
             
             total_elapsed = time.time() - start_time
-            logger.info(f"list_applications: SUCCESS returned {len(rows)} rows (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"list_applications: Direct DB SUCCESS returned {len(rows)} rows (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return _rows_to_json(rows)
     except Exception as e:
         logger.error(f"list_applications: FAILED after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
@@ -315,6 +380,19 @@ def update_application_status(application_id: int, status: str, reason: Optional
     """Update status, reason, and confidence for an application."""
     logger.info(f"update_application_status: START id={application_id}, status={status}, confidence={confidence}")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.update_application_status(application_id, status, reason, confidence)
+            elapsed = time.time() - start_time
+            logger.info(f"update_application_status: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"update_application_status: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -350,7 +428,7 @@ def update_application_status(application_id: int, status: str, reason: Optional
             rows_updated = cur.rowcount
             
             total_elapsed = time.time() - start_time
-            logger.info(f"update_application_status: SUCCESS id={application_id} updated_rows={rows_updated} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"update_application_status: Direct DB SUCCESS id={application_id} updated_rows={rows_updated} (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return json.dumps({"updated_rows": rows_updated})
     except Exception as e:
         logger.error(f"update_application_status: FAILED for id={application_id} after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
@@ -368,6 +446,19 @@ def find_latest_by_applicant(applicant_name: str) -> str:
     """Return the latest application row for a given applicant name (case-insensitive, trimmed)."""
     logger.info(f"find_latest_by_applicant: Searching for name='{applicant_name}'")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.find_latest_by_applicant(applicant_name)
+            elapsed = time.time() - start_time
+            logger.info(f"find_latest_by_applicant: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"find_latest_by_applicant: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -393,7 +484,7 @@ def find_latest_by_applicant(applicant_name: str) -> str:
                 return json.dumps({"error": "not_found", "applicant_name": search_name})
             
             total_elapsed = time.time() - start_time
-            logger.info(f"find_latest_by_applicant: SUCCESS found record for '{search_name}' (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"find_latest_by_applicant: Direct DB SUCCESS found record for '{search_name}' (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return json.dumps(row, default=str, indent=2)
     except Exception as e:
         logger.error(f"find_latest_by_applicant: FAILED for '{applicant_name}' after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
@@ -415,6 +506,19 @@ def update_application_agent_output(application_id: int, agent_output: Any) -> s
     """
     logger.info(f"update_application_agent_output: START id={application_id}")
     start_time = time.time()
+    
+    # Try Lambda API first
+    lambda_client = _get_lambda_client()
+    if lambda_client:
+        try:
+            result = lambda_client.update_application_agent_output(application_id, agent_output)
+            elapsed = time.time() - start_time
+            logger.info(f"update_application_agent_output: Lambda SUCCESS (took {elapsed:.2f}s)")
+            return result
+        except Exception as e:
+            logger.error(f"update_application_agent_output: Lambda failed: {e}. Falling back to direct DB if available.")
+    
+    # Fallback to direct database access
     try:
         conn = _get_db_conn()
     except Exception as e:
@@ -435,7 +539,7 @@ def update_application_agent_output(application_id: int, agent_output: Any) -> s
             rows_updated = cur.rowcount
             
             total_elapsed = time.time() - start_time
-            logger.info(f"update_application_agent_output: SUCCESS id={application_id} updated_rows={rows_updated} payload_size={payload_size}B (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
+            logger.info(f"update_application_agent_output: Direct DB SUCCESS id={application_id} updated_rows={rows_updated} payload_size={payload_size}B (query={query_elapsed:.3f}s, total={total_elapsed:.3f}s)")
             return json.dumps({"updated_rows": rows_updated})
     except Exception as e:
         logger.error(f"update_application_agent_output: FAILED for id={application_id} after {time.time() - start_time:.2f}s: {type(e).__name__}: {e}", exc_info=True)
