@@ -1,6 +1,7 @@
-DB_HOST=sathya-database.cilmgugy4iud.us-east-1.rds.amazonaws.com
+DB_HOST=sathya-database.cu5qs8u26d7a.us-east-1.rds.amazonaws.com
 DB_PORT=3306
 DB_USER=admin
+DB_PASSWORD=_sK[hC4[u1tcdS]XIQwAV18<3Zvf
 DB_NAME=dev
 
 # Copy this file to `resource/properties` and fill in real values.
