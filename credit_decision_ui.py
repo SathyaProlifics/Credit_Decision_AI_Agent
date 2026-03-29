@@ -236,8 +236,41 @@ if submitted:
                 t.start()
                 logger.debug(f"UI: Background thread started for app_id={app_id}")
 
-                # Poll DB for progress
-                placeholder = st.empty()
+                # --- Create tabs UPFRONT so they appear immediately ---
+                # Each tab starts in "waiting" state and is filled as the agent completes.
+                metrics_ph = st.empty()  # Summary metrics – filled after all agents done
+
+                tab_progress, tab_data, tab_risk, tab_decision, tab_audit, tab_full = st.tabs(
+                    ["🛰️ Progress", "📊 Data", "⚠️ Risk", "🤖 Decision", "📋 Audit", "📄 Full"]
+                )
+                with tab_progress:
+                    progress_ph = st.empty()
+                with tab_data:
+                    data_ph = st.empty()
+                with tab_risk:
+                    risk_ph = st.empty()
+                with tab_decision:
+                    decision_ph = st.empty()
+                with tab_audit:
+                    audit_ph = st.empty()
+                with tab_full:
+                    full_ph = st.empty()
+
+                # Initial "locked" state for each agent tab
+                with data_ph.container():
+                    st.info("🔒 Waiting for Data Collector agent to complete...")
+                with risk_ph.container():
+                    st.info("🔒 Waiting for Risk Assessor agent to complete...")
+                with decision_ph.container():
+                    st.info("🔒 Waiting for Decision Maker agent to complete...")
+                with audit_ph.container():
+                    st.info("🔒 Waiting for Auditor agent to complete...")
+                with full_ph.container():
+                    st.info("⏳ Processing in progress...")
+
+                tabs_done = {"data": False, "risk": False, "decision": False, "audit": False}
+
+                # Poll DB – update each tab as soon as its agent's data lands
                 poll_start = time.time()
                 poll_count = 0
                 while True:
@@ -255,16 +288,73 @@ if submitted:
                             except Exception as parse_err:
                                 logger.error(f"UI: Failed to parse agent_output: {parse_err}", exc_info=True)
                                 parsed = agent_out
-                            try:
-                                # Display only progress element from JSON
-                                progress_data = parsed.get("progress") if isinstance(parsed, dict) else None
-                                if progress_data:
-                                    placeholder.json(progress_data)
-                                else:
-                                    placeholder.text("Processing... (waiting for progress data)")
-                            except Exception as display_err:
-                                logger.error(f"UI: Failed to display JSON: {display_err}", exc_info=True)
-                                placeholder.text(str(parsed)[:2000])
+
+                            # ── Progress tab ──────────────────────────────────────
+                            if isinstance(parsed, dict):
+                                proc_status = parsed.get("processing_status", "")
+                                progress_data = parsed.get("progress")
+                                with progress_ph.container():
+                                    st.markdown(f"**Status:** `{proc_status}`")
+                                    if progress_data:
+                                        for msg in progress_data:
+                                            st.markdown(f"✅ {msg}")
+                                    else:
+                                        st.text("Processing… (waiting for progress data)")
+
+                            # ── Data tab – unlocked after Agent 1 ─────────────────
+                            if not tabs_done["data"] and isinstance(parsed, dict) and "data_collection" in parsed:
+                                dc = parsed["data_collection"]
+                                with data_ph.container():
+                                    st.success("✅ Data Collector agent completed")
+                                    if isinstance(dc, dict) and dc.get("format") != "text_fallback":
+                                        score = dc.get("data_completeness_score", "N/A")
+                                        st.metric("Data Completeness Score", score)
+                                    st.json(dc)
+                                tabs_done["data"] = True
+                                logger.info(f"UI: Data tab unlocked for app_id={app_id}")
+
+                            # ── Risk tab – unlocked after Agent 2 ─────────────────
+                            if not tabs_done["risk"] and isinstance(parsed, dict) and "risk_assessment" in parsed:
+                                ra = parsed["risk_assessment"]
+                                with risk_ph.container():
+                                    st.success("✅ Risk Assessor agent completed")
+                                    if isinstance(ra, dict) and ra.get("format") != "text_fallback":
+                                        c1, c2 = st.columns(2)
+                                        c1.metric("Risk Score", ra.get("overall_risk_score", "N/A"))
+                                        c2.metric("Risk Category", ra.get("risk_category", "N/A"))
+                                    st.json(ra)
+                                tabs_done["risk"] = True
+                                logger.info(f"UI: Risk tab unlocked for app_id={app_id}")
+
+                            # ── Decision tab – unlocked after Agent 3 ─────────────
+                            if not tabs_done["decision"] and isinstance(parsed, dict) and "final_decision" in parsed:
+                                fd = parsed["final_decision"]
+                                with decision_ph.container():
+                                    st.success("✅ Decision Maker agent completed")
+                                    if isinstance(fd, dict):
+                                        dv = fd.get("decision", "UNKNOWN")
+                                        if dv == "APPROVE":
+                                            st.success("✅ Decision: APPROVE")
+                                        elif dv == "DENY":
+                                            st.error("❌ Decision: DENY")
+                                        else:
+                                            st.warning(f"⚠️ Decision: {dv}")
+                                    st.json(fd)
+                                tabs_done["decision"] = True
+                                logger.info(f"UI: Decision tab unlocked for app_id={app_id}")
+
+                            # ── Audit tab – unlocked after Agent 4 ────────────────
+                            if not tabs_done["audit"] and isinstance(parsed, dict) and "audit_report" in parsed:
+                                ar = parsed["audit_report"]
+                                with audit_ph.container():
+                                    st.success("✅ Auditor agent completed")
+                                    if isinstance(ar, dict) and ar.get("format") != "text_fallback":
+                                        c1, c2 = st.columns(2)
+                                        c1.metric("Compliance Score", ar.get("audit_compliance_score", "N/A"))
+                                        c2.metric("Fair Lending", ar.get("fair_lending_check_result", "N/A"))
+                                    st.json(ar)
+                                tabs_done["audit"] = True
+                                logger.info(f"UI: Audit tab unlocked for app_id={app_id}")
 
                             if isinstance(parsed, dict) and parsed.get("processing_status") == "completed":
                                 logger.info(f"UI: Processing completed for app_id={app_id}")
@@ -272,121 +362,81 @@ if submitted:
                                 break
                     except Exception as poll_err:
                         logger.warning(f"UI: Polling error for app_id={app_id}: {poll_err}", exc_info=True)
-                        placeholder.text("Waiting for agent to persist progress...")
+                        with progress_ph.container():
+                            st.text("Waiting for agent to persist progress...")
 
                     if time.time() - poll_start > 300:
                         logger.error(f"UI: Polling timeout after 300s for app_id={app_id}")
-                        placeholder.text("Timed out waiting for agent.")
+                        with progress_ph.container():
+                            st.error("⏰ Timed out waiting for agent.")
                         break
                     time.sleep(1)
 
-            # Normalize result
-            if isinstance(result, str):
+                # Normalize result
+                if isinstance(result, str):
+                    try:
+                        parsed_r = json.loads(result)
+                        if isinstance(parsed_r, dict) and 'result' in parsed_r:
+                            result = parsed_r['result']
+                        else:
+                            result = parsed_r
+                    except Exception as parse_err:
+                        logger.error(f"UI: Failed to parse string result: {parse_err}", exc_info=True)
+                        st.error("❌ Agent returned non-JSON response")
+                        st.text(result)
+                        result = {"error": "non_json_response"}
+
+                logger.info(f"UI: Displaying application results for app_id={app_id}")
+
+                # Clear the initial status message
+                if status_placeholder:
+                    status_placeholder.empty()
+
+                final_decision = result.get('final_decision') if isinstance(result, dict) else None
+                audit_report   = result.get('audit_report')   if isinstance(result, dict) else None
+                data_collection = result.get('data_collection') if isinstance(result, dict) else None
+                risk_assessment = result.get('risk_assessment') if isinstance(result, dict) else None
+
+                logger.debug(f"UI: Extracted final_decision, audit_report, data_collection, risk_assessment from result")
+
+                # Fill summary metrics now that everything is done
+                if result and not result.get("error"):
+                    with metrics_ph.container():
+                        st.success("✅ Application processed successfully!")
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            dec = final_decision.get('decision') if isinstance(final_decision, dict) else 'UNKNOWN'
+                            st.metric("Decision", dec)
+                        with col2:
+                            conf = final_decision.get('confidence') if isinstance(final_decision, dict) else 0
+                            st.metric("Confidence", f"{conf}%")
+                        with col3:
+                            audit_score = audit_report.get('audit_compliance_score') if isinstance(audit_report, dict) else 0
+                            st.metric("Audit Score", f"{audit_score}/100")
+                        logger.debug(f"UI: Displayed summary metrics for app_id={app_id}")
+
+                # Fill Full Report tab
+                if result:
+                    with full_ph.container():
+                        st.subheader("Full Report")
+                        proc_status = result.get("processing_status") if isinstance(result, dict) else None
+                        st.markdown(f"**Status:** {proc_status or 'unknown'}")
+                        st.json(result)
+
+                # Update database
                 try:
-                    parsed = json.loads(result)
-                    if isinstance(parsed, dict) and 'result' in parsed:
-                        result = parsed['result']
-                    else:
-                        result = parsed
-                except Exception as parse_err:
-                    logger.error(f"UI: Failed to parse string result: {parse_err}", exc_info=True)
-                    st.error("❌ Agent returned non-JSON response")
-                    st.text(result)
-                    result = {"error": "non_json_response"}
-
-            # Display results
-            logger.info(f"UI: Displaying application results for app_id={app_id}")
-            
-            # Clear the initial status message
-            if status_placeholder:
-                status_placeholder.empty()
-            
-            st.success("✅ Application processed successfully!")
-
-            final_decision = result.get('final_decision') if isinstance(result, dict) else None
-            audit_report = result.get('audit_report') if isinstance(result, dict) else None
-            data_collection = result.get('data_collection') if isinstance(result, dict) else None
-            risk_assessment = result.get('risk_assessment') if isinstance(result, dict) else None
-
-            logger.debug(f"UI: Extracted final_decision, audit_report, data_collection, risk_assessment from result")
-
-            # Summary metrics
-            col1, col2, col3 = st.columns(3)
-            with col1:
-                dec = final_decision.get('decision') if isinstance(final_decision, dict) else 'UNKNOWN'
-                st.metric("Decision", dec)
-            with col2:
-                conf = final_decision.get('confidence') if isinstance(final_decision, dict) else 0
-                st.metric("Confidence", f"{conf}%")
-            with col3:
-                audit_score = audit_report.get('audit_compliance_score') if isinstance(audit_report, dict) else 0
-                st.metric("Audit Score", f"{audit_score}/100")
-
-            logger.debug(f"UI: Displayed summary metrics for app_id={app_id}")
-
-            # Detailed tabs
-            tab_progress, tab1, tab2, tab3, tab4, tab5 = st.tabs(
-                ["🛰️ Progress", "📊 Data", "⚠️ Risk", "🤖 Decision", "📋 Audit", "📄 Full"]
-            )
-
-            with tab1:
-                st.subheader("Data Collection")
-                if data_collection and not data_collection.get('error'):
-                    st.json(data_collection)
-                else:
-                    st.error("No data collection results")
-
-            with tab2:
-                st.subheader("Risk Assessment")
-                if risk_assessment and not risk_assessment.get('error'):
-                    st.json(risk_assessment)
-                else:
-                    st.error("No risk assessment results")
-
-            with tab3:
-                st.subheader("Final Decision")
-                if final_decision and not final_decision.get('error'):
-                    decision = final_decision.get('decision', 'UNKNOWN')
-                    if decision == 'APPROVE':
-                        st.success("✅ Application Approved!")
-                    elif decision == 'DENY':
-                        st.error("❌ Application Denied")
-                    elif decision == 'REFER':
-                        st.warning("⚠️ Referred for Manual Review")
-                    st.json(final_decision)
-                else:
-                    st.error("No decision results")
-
-            with tab4:
-                st.subheader("Audit Report")
-                if audit_report and not audit_report.get('error'):
-                    st.json(audit_report)
-                else:
-                    st.error("No audit results")
-
-            with tab5:
-                st.subheader("Full Report")
-                st.json(result)
-
-            with tab_progress:
-                st.subheader("Processing Status")
-                proc_status = result.get("processing_status") if isinstance(result, dict) else None
-                st.markdown(f"**Status:** {proc_status or 'unknown'}")
-
-            # Update database
-            try:
-                if app_id and final_decision:
-                    decision = final_decision.get("decision") or "UNKNOWN"
-                    confidence = final_decision.get("confidence")
-                    logger.debug(f"UI: Final decision={decision}, confidence={confidence} for app_id={app_id}")
-                    update_application_status(app_id, decision, reason=final_decision.get("reason"), confidence=confidence)
-                    logger.debug(f"UI: Updated application_status for app_id={app_id}")
-                    update_application_agent_output(app_id, result)
-                    logger.debug(f"UI: Updated application_agent_output for app_id={app_id}")
-                    st.text(f"Saved application id: {app_id}")
-                    logger.info(f"UI: Successfully saved final application data for app_id={app_id}")
-            except Exception as db_err:
-                logger.exception(f"UI: Failed to update DB after processing (app_id={app_id}): {db_err}")
+                    if app_id and final_decision:
+                        decision = final_decision.get("decision") or "UNKNOWN"
+                        confidence = final_decision.get("confidence")
+                        logger.debug(f"UI: Final decision={decision}, confidence={confidence} for app_id={app_id}")
+                        update_application_status(app_id, decision, reason=final_decision.get("reason"), confidence=confidence)
+                        logger.debug(f"UI: Updated application_status for app_id={app_id}")
+                        update_application_agent_output(app_id, result)
+                        logger.debug(f"UI: Updated application_agent_output for app_id={app_id}")
+                        st.text(f"Saved application id: {app_id}")
+                        logger.info(f"UI: Successfully saved final application data for app_id={app_id}")
+                except Exception as db_err:
+                    logger.exception(f"UI: Failed to update DB after processing (app_id={app_id}): {db_err}")
 
         except Exception as e:
             logger.exception(f"UI: Error processing application: {e}")

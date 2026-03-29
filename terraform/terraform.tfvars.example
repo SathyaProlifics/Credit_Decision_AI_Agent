@@ -1,0 +1,10 @@
+# Copy this file to terraform.tfvars and fill in values
+# terraform.tfvars is gitignored – never commit real credentials
+
+aws_region        = "us-east-1"
+environment       = "dev"
+project_name      = "orchestrateai"
+db_name           = "dev"
+db_username       = "admin"
+db_password       = "CHANGE_ME_min8chars!"   # <-- set your password here
+db_instance_class = "db.t3.micro"             # free-tier eligible

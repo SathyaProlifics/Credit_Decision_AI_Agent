@@ -1,0 +1,397 @@
+banking_rules:
+  version: "1.0"
+  last_updated: "2026-03-29"
+  effective_date: "2026-03-29"
+
+regulatory_framework:
+  fair_lending:
+    description: "Prohibition of discrimination based on protected characteristics"
+    acts:
+      - name: "Equal Credit Opportunity Act (ECOA)"
+        requirements: "Decisions based solely on creditworthiness, not protected characteristics"
+      - name: "Fair Credit Reporting Act (FCRA)"
+        requirements: "Adverse action notices required if credit report affected decision"
+  
+  truth_in_lending:
+    description: "Transparent disclosure of credit terms"
+    acts:
+      - name: "Regulation Z (TILA)"
+        requirements: "All rates, fees, and terms must be clearly disclosed"
+      - name: "Dodd-Frank Act"
+        requirements: "Ability to repay standard - ensure applicant can reasonably repay loan"
+
+credit_decision_matrix:
+  credit_score_tiers:
+    excellent:
+      range: [750, 850]
+      category: "Prime"
+      approval_probability: 0.95
+      requirements: "Minimal requirements"
+    
+    good:
+      range: [700, 749]
+      category: "Near-Prime"
+      approval_probability: 0.80
+      requirements: "DTI < 35%"
+    
+    fair:
+      range: [650, 699]
+      category: "Non-Prime"
+      approval_probability: 0.50
+      requirements: "DTI < 30%, manual review recommended"
+    
+    poor:
+      range: [600, 649]
+      category: "Subprime"
+      approval_probability: 0.25
+      requirements: "High risk, requires manual review"
+    
+    very_poor:
+      range: [0, 599]
+      category: "High-Risk"
+      approval_probability: 0.05
+      requirements: "Typically declined unless exceptional circumstances"
+
+  dti_thresholds:
+    excellent:
+      range: [0, 0.30]
+      status: "Excellent"
+      approval_indicator: true
+    
+    acceptable:
+      range: [0.30, 0.35]
+      status: "Acceptable"
+      approval_indicator: true
+    
+    marginal:
+      range: [0.35, 0.40]
+      status: "Marginal"
+      approval_indicator: "conditional"
+      requires_compensating_factors: true
+    
+    high_risk:
+      range: [0.40, 0.45]
+      status: "High Risk"
+      approval_indicator: false
+      requires_manual_review: true
+    
+    unacceptable:
+      range: [0.45, 1.0]
+      status: "Unacceptable"
+      approval_indicator: false
+      recommendation: "Typically decline"
+
+  income_requirements:
+    minimum_annual: 25000
+    
+    employment_scoring:
+      full_time_2plus_years:
+        score: 100
+        status: "Excellent"
+        employment_weight: 0.80
+      
+      full_time_less_2years:
+        score: 70
+        status: "Good"
+        employment_weight: 0.70
+      
+      part_time_2plus_years:
+        score: 60
+        status: "Fair"
+        employment_weight: 0.60
+      
+      part_time_less_2years:
+        score: 40
+        status: "High Risk"
+        employment_weight: 0.40
+      
+      self_employed_3plus_years:
+        score: 65
+        status: "Fair"
+        employment_weight: 0.65
+      
+      self_employed_less_3years:
+        score: 50
+        status: "Caution"
+        employment_weight: 0.50
+      
+      unemployed:
+        score: 10
+        status: "Unacceptable"
+        employment_weight: 0.0
+      
+      retired_with_income:
+        score: 75
+        status: "Good"
+        employment_weight: 0.75
+
+  loan_amount_criteria:
+    max_loan_to_income_ratio: 3.0
+    max_loan_to_credit_score_ratio: 50
+    calculation_rule: "Use more restrictive of the two limits"
+    examples:
+      - income: 75000
+        max_by_income: 225000
+      - credit_score: 720
+        max_by_score: 36000
+
+  existing_debt_evaluation:
+    max_existing_debt_ratio: 2.0
+    max_total_debt_to_income: 3.0
+    debt_aging_factor: "Older debts (5+ years) weighted less negatively"
+
+approval_decisions:
+  approve_triggers:
+    - "Credit Score ≥ 700 AND DTI < 30% AND Income ≥ $30,000 AND Employment stable"
+    - "Credit Score ≥ 720 AND DTI < 35% AND compensation factors present"
+  
+  refer_triggers:
+    - "Credit Score 650-699 OR DTI 30-40% OR Recent employment changes"
+    - "Score 700+ but DTI 35-40% (borderline cases)"
+    - "Score 600-649 with strong compensating factors"
+  
+  deny_triggers:
+    - "Credit Score < 600 (unless exceptional circumstances)"
+    - "DTI > 45%"
+    - "Income < $25,000 (inadequate earning)"
+    - "Recent delinquencies (< 6 months)"
+    - "Active bankruptcy"
+    - "Multiple fraud indicators"
+
+risk_assessment:
+  risk_score_components:
+    payment_history:
+      weight: 0.40
+      excellent_score: 35
+      poor_score: 10
+    
+    credit_utilization:
+      weight: 0.20
+      excellent_low_usage: 18
+      poor_high_usage: 5
+    
+    credit_age:
+      weight: 0.15
+      excellent_long_history: 13
+      poor_new_credit: 5
+    
+    inquiries_new_accounts:
+      weight: 0.15
+      excellent_few: 13
+      poor_multiple_recent: 5
+    
+    income_stability:
+      weight: 0.10
+      excellent_stable: 8
+      poor_unstable: 3
+
+  risk_categories:
+    low_risk:
+      score_range: [75, 100]
+      approval_probability: 0.95
+      credit_limit_ratio: 3.0
+      interest_rate_range: "6-8%"
+    
+    medium_risk:
+      score_range: [50, 74]
+      approval_probability: 0.70
+      credit_limit_ratio: 2.0
+      interest_rate_range: "10-14%"
+    
+    high_risk:
+      score_range: [25, 49]
+      approval_probability: 0.35
+      credit_limit_ratio: 1.0
+      interest_rate_range: "16-22%"
+    
+    very_high_risk:
+      score_range: [0, 24]
+      approval_probability: 0.05
+      credit_limit_ratio: 0.5
+      interest_rate_range: "24%+"
+
+  red_flags:
+    - "Recent late payments (30/60/90 days past due)"
+    - "Bankruptcy (recent within 7 years)"
+    - "Collections or charge-offs"
+    - "Multiple delinquencies"
+    - "High credit utilization (>80%)"
+    - "Recent inquiries (3+ in 6 months)"
+    - "Short employment tenure (<6 months)"
+    - "Very high DTI combined with low savings"
+
+  green_flags:
+    - "Consistent on-time payment history"
+    - "Long credit history (10+ years)"
+    - "Low credit utilization"
+    - "Stable long-term employment"
+    - "Savings/emergency fund presence"
+    - "Recent paycheck increase"
+    - "Multiple credit accounts"
+
+compliance_framework:
+  required_documentation:
+    every_decision:
+      - "Applicant identification and contact information"
+      - "Income verification (recent pay stubs or tax returns)"
+      - "Employment verification"
+      - "Credit report pull timestamp"
+      - "Credit score used in decision"
+      - "All quantitative metrics (DTI, debt ratios)"
+      - "Decision reason codes"
+
+  adverse_action_notification:
+    trigger: "If DENIED or REFER (pending)"
+    timeline: "Within 30 days"
+    content:
+      - "Specific reasons for decision"
+      - "Credit score range"
+      - "Applicant rights"
+      - "FCRA and dispute rights reference"
+
+  fair_lending_compliance:
+    checks:
+      - "Verify no disparate impact across protected classes"
+      - "Ensure consistent application of lending criteria"
+      - "Document compensating factors when applicable"
+      - "Flag unusual patterns for review"
+
+  audit_trail_requirements:
+    every_decision_must_include:
+      - "Timestamp of decision"
+      - "Agent/system decision component versions"
+      - "Input data snapshot (sanitized)"
+      - "Decision rationale with specific factors"
+      - "Manual reviewer notes (if applicable)"
+      - "Policy version used for decision"
+
+  data_retention:
+    application_records: "3 years minimum"
+    credit_reports_verifications: "3 years"
+    adverse_action_notices: "3 years"
+    decision_logs_audit_trails: "7 years"
+
+compensating_factors:
+  acceptable_factors:
+    - name: "Significant Savings/Emergency Fund"
+      requirement: ">3 months living expenses"
+      strength: "strong"
+    
+    - name: "Recent Income Increase"
+      requirement: "20%+ in last 12 months, documented"
+      strength: "strong"
+    
+    - name: "Job Promotion or Degree Completion"
+      requirement: "Recent, verifiable"
+      strength: "strong"
+    
+    - name: "Long Employment Tenure"
+      requirement: "10+ years with same employer"
+      strength: "strong"
+    
+    - name: "Additional Collateral or Co-signer"
+      requirement: "Strong credit profile"
+      strength: "strong"
+    
+    - name: "Low Recent Delinquencies"
+      requirement: "Quickly resolved"
+      strength: "medium"
+    
+    - name: "High Credit Limit"
+      requirement: "Proves historical creditworthiness"
+      strength: "medium"
+    
+    - name: "Explanation Letter"
+      requirement: "For negative factors, if reasonable"
+      strength: "medium"
+
+  strength_assessment:
+    "1-2_strong_factors":
+      offset: "15-25 point credit decline"
+    
+    "3_plus_strong_factors":
+      offset: "25-50 point credit decline"
+    
+    "very_strong_equity":
+      offset: "Can offset more significant issues"
+
+special_circumstances:
+  recent_bankruptcy:
+    requirement: "Requires manual review"
+    evaluation_criteria:
+      - "Reason for bankruptcy"
+      - "Time since discharge"
+      - "Recent rebuilding indicators"
+    approval_: "May approve if strong recovery indicators present"
+
+  recent_delinquencies:
+    evaluation:
+      "0_to_6_months": "Strong negative signal, consider denial"
+      "6_to_12_months": "Evaluate reason and recency of resolution"
+
+  thin_credit_file:
+    description: "Fewer than 3 accounts"
+    handling: "Limited credit history = higher risk assessment"
+    alternative: "Consider alternative data sources for approval"
+
+  first_time_buyer:
+    description: "New credit"
+    handling: "Less credit history expected"
+    adjustment: "May have higher approval threshold"
+
+  self_employed:
+    requirement: "3-year tax returns"
+    income_calculation: "Income averaging may be used"
+    considerations: "Greater volatility expected"
+
+  co_signer:
+    requirements:
+      - "Co-signer credit also evaluated"
+      - "Both parties liable for debt"
+      - "Co-signer income can support qualification"
+
+output_requirements:
+  decision_maker_agent:
+    required_fields:
+      - "decision"
+      - "credit_limit"
+      - "interest_rate"
+      - "term_length_months"
+      - "conditions"
+      - "compensating_factors_used"
+      - "confidence"
+      - "detailed_reasoning"
+      - "policy_citations"
+      - "regulatory_compliance_verified"
+
+  audit_agent:
+    required_fields:
+      - "audit_compliance_score"
+      - "fair_lending_check_result"
+      - "documentation_completeness"
+      - "regulatory_compliance"
+      - "compliance_issues"
+      - "regulatory_flags"
+      - "recommendations"
+      - "adverse_action_notice_required"
+
+  risk_assessor_agent:
+    required_fields:
+      - "overall_risk_score"
+      - "risk_category"
+      - "credit_tier"
+      - "key_risk_factors"
+      - "mitigating_factors"
+      - "recommended_credit_limit"
+      - "suggested_interest_rate_range"
+      - "regulatory_flags"
+
+  data_collector_agent:
+    required_fields:
+      - "data_completeness_score"
+      - "quality_assessment"
+      - "regulatory_requirements_met"
+      - "key_risk_indicators"
+      - "positive_factors"
+      - "missing_data_recommendations"
+      - "profile_summary"

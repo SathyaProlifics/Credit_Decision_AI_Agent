@@ -14,12 +14,25 @@ from strands.models import BedrockModel
 # Import LLM provider abstraction layer
 from LLMProvider import ModelConfig, LLMFactory, ModelConfigManager
 
+# Import banking rules loader from YAML configuration
+from BankingRulesLoader import (
+    get_system_context,
+    get_credit_decision_rules,
+    get_risk_framework,
+    get_compliance_rules,
+    check_rules_loaded
+)
+
 region = boto3.session.Session().region_name or "us-east-1"
 logger = logging.getLogger("credit_decision_agent")
 logger.setLevel(logging.DEBUG)  # Ensure DEBUG level is set
 
 # Initialize model config manager
 config_manager = ModelConfigManager()
+
+# Check if banking rules loaded
+if not check_rules_loaded():
+    logger.warning("WARNING: Banking rules not loaded - credit decisions may lack regulatory context")
 
 # Import DB tools (these are `@tool` wrappers but callable as functions)
 from CreditDecisionStrandsDBTools import (
@@ -62,7 +75,9 @@ class DataCollectorAgent:
         existing_debts_f = _to_float(applicant.get("existing_debts", 0))
         requested_credit_f = _to_float(applicant.get("requested_credit", 0))
 
-        prompt = f"""As a CREDIT DATA COLLECTION SPECIALIST, analyze this applicant's data:
+        prompt = f"""{get_system_context()}
+
+As a CREDIT DATA COLLECTION SPECIALIST, analyze this applicant's data:
 
 Name: {applicant.get('applicant_name', 'Unknown')}
 Age: {applicant.get('age', 'N/A')}
@@ -73,7 +88,14 @@ DTI Ratio: {dti_ratio_f:.2%}
 Existing Debts: ${existing_debts_f:,.2f}
 Requested Credit: ${requested_credit_f:,.2f}
 
-Provide analysis in JSON with: data_completeness_score, quality_assessment, key_risk_indicators, positive_factors, missing_data_recommendations, profile_summary."""
+ANALYSIS REQUIREMENTS:
+1. Validate data completeness using regulatory standards
+2. Assess data quality against banking standards
+3. Identify key risk indicators from the profile
+4. Highlight positive factors that support credit decision
+5. Recommend missing documentation per compliance requirements
+
+Provide analysis in JSON with: data_completeness_score (1-100), quality_assessment, regulatory_requirements_met, key_risk_indicators, positive_factors, missing_data_recommendations, profile_summary."""
 
         return self._invoke_llm(prompt)
     
@@ -94,18 +116,29 @@ Provide analysis in JSON with: data_completeness_score, quality_assessment, key_
         # Try to extract JSON from text response
         text = response.get("text", "")
         if text:
-            # Try regex-based JSON extraction
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            matches = re.findall(json_pattern, text)
-            if matches:
-                for match in matches:
-                    try:
-                        parsed = json.loads(match)
-                        if "data_completeness_score" in parsed or "quality_assessment" in parsed:
-                            logger.info(f"{self.name} agent: Extracted JSON with collection data from text")
-                            return parsed
-                    except json.JSONDecodeError:
-                        continue
+            # Remove markdown code blocks if present
+            text_clean = re.sub(r'```json\s*', '', text)
+            text_clean = re.sub(r'```\s*', '', text_clean)
+            
+            # Try to find JSON by matching braces (handles nested structures)
+            for start_idx in range(len(text_clean)):
+                if text_clean[start_idx] == '{':
+                    brace_count = 0
+                    for end_idx in range(start_idx, len(text_clean)):
+                        if text_clean[end_idx] == '{':
+                            brace_count += 1
+                        elif text_clean[end_idx] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_candidate = text_clean[start_idx:end_idx + 1]
+                                try:
+                                    parsed = json.loads(json_candidate)
+                                    if "data_completeness_score" in parsed or "quality_assessment" in parsed:
+                                        logger.info(f"{self.name} agent: Extracted JSON with collection data from text")
+                                        return parsed
+                                except json.JSONDecodeError:
+                                    pass
+                                break
         
         logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
         return {
@@ -127,7 +160,11 @@ class RiskAssessorAgent:
     def assess(self, applicant: Dict[str, Any], collected_data: Dict[str, Any]) -> Dict[str, Any]:
         """Assess credit risk"""
         
-        prompt = f"""As a CREDIT RISK ASSESSMENT SPECIALIST, evaluate this application:
+        prompt = f"""{get_system_context()}
+
+{get_risk_framework()}
+
+As a CREDIT RISK ASSESSMENT SPECIALIST, evaluate this application:
 
 APPLICANT DATA:
 {json.dumps(applicant, indent=2)}
@@ -135,7 +172,17 @@ APPLICANT DATA:
 COLLECTED DATA ANALYSIS:
 {json.dumps(collected_data, indent=2)}
 
-Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category (Low/Medium/High/Very High), key_risk_factors, mitigating_factors, recommended_credit_limit, suggested_interest_rate_range."""
+RISK ASSESSMENT TASK:
+1. Calculate overall_risk_score (1-100) using the risk scoring system
+2. Categorize risk (Low/Medium/High/Very High) per banking standards
+3. Identify all key_risk_factors from applicant profile
+4. Highlight mitigating_factors that reduce risk
+5. Recommend credit_limit per risk tier guidelines
+6. Suggest interest_rate_range based on risk category
+7. Flag any fair lending concerns or patterns requiring escalation
+8. Provide regulatory compliance assessment
+
+Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category (Low/Medium/High/Very High), credit_tier, key_risk_factors, mitigating_factors, recommended_credit_limit, suggested_interest_rate_range, regulatory_flags, compliance_notes."""
 
         return self._invoke_llm(prompt)
     
@@ -158,18 +205,29 @@ Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category 
         # Try to extract JSON from text response
         text = response.get("text", "")
         if text:
-            # Try regex-based JSON extraction
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            matches = re.findall(json_pattern, text)
-            if matches:
-                for match in matches:
-                    try:
-                        parsed = json.loads(match)
-                        if "overall_risk_score" in parsed or "risk_category" in parsed:
-                            logger.info(f"{self.name} AGENT: Extracted JSON with risk data from text (total time={total_elapsed:.2f}s)")
-                            return parsed
-                    except json.JSONDecodeError:
-                        continue
+            # Remove markdown code blocks if present
+            text_clean = re.sub(r'```json\s*', '', text)
+            text_clean = re.sub(r'```\s*', '', text_clean)
+            
+            # Try to find JSON by matching braces (handles nested structures)
+            for start_idx in range(len(text_clean)):
+                if text_clean[start_idx] == '{':
+                    brace_count = 0
+                    for end_idx in range(start_idx, len(text_clean)):
+                        if text_clean[end_idx] == '{':
+                            brace_count += 1
+                        elif text_clean[end_idx] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_candidate = text_clean[start_idx:end_idx + 1]
+                                try:
+                                    parsed = json.loads(json_candidate)
+                                    if "overall_risk_score" in parsed or "risk_category" in parsed:
+                                        logger.info(f"{self.name} AGENT: Extracted JSON with risk data from text (total time={total_elapsed:.2f}s)")
+                                        return parsed
+                                except json.JSONDecodeError:
+                                    pass
+                                break
         
         logger.warning(f"{self.name} AGENT: Could not extract JSON, using fallback (total time={total_elapsed:.2f}s)")
         return {
@@ -193,7 +251,13 @@ class DecisionMakerAgent:
         """Make final credit decision"""
         logger.info(f"{self.name} agent: Starting decision process")
         
-        prompt = f"""As a SENIOR CREDIT UNDERWRITER, make a decision on this application:
+        prompt = f"""{get_system_context()}
+
+{get_credit_decision_rules()}
+
+{get_compliance_rules()}
+
+As a SENIOR CREDIT UNDERWRITER, make a COMPLIANT decision on this application:
 
 APPLICANT:
 {json.dumps(applicant, indent=2)}
@@ -201,12 +265,23 @@ APPLICANT:
 RISK ASSESSMENT:
 {json.dumps(risk_assessment, indent=2)}
 
-DECISION REQUIRED: Choose one of APPROVE, DENY, or REFER.
+DECISION REQUIREMENTS:
+1. Use the Credit Decision Matrix to determine approval/denial/referral
+2. Verify all compliance and fair lending requirements are met
+3. Document decision reasoning with specific policy references
+4. Include required audit trail elements
 
-For APPROVE include: credit_limit, interest_rate, term_length_months, conditions.
-For all decisions include: confidence (1-100), detailed_reasoning.
+DECISION OPTIONS:
+- APPROVE: Grant credit with specified terms and conditions
+- DENY: Decline application with specific reason code
+- REFER: Send to manual review with clear intervention triggers
 
-Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate, term_length_months, conditions, confidence, detailed_reasoning."""
+For APPROVE include: credit_limit (per guidelines), interest_rate (apr string), term_length_months, conditions (list), compensating_factors_used (list).
+For DENY include: denial_reason_code, regulatory_notice_required (bool).
+For all decisions include: confidence (1-100), detailed_reasoning (2-3 sentences max, cite the key policy rule only).
+
+CRITICAL: Respond with ONLY a compact JSON object. No prose outside the JSON. Keep all string values SHORT.
+Required keys: decision, credit_limit, interest_rate, term_length_months, conditions, compensating_factors_used, denial_reason_code, confidence, detailed_reasoning, regulatory_compliance_verified."""
 
         return self._invoke_llm(prompt)
     
@@ -227,20 +302,135 @@ Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate
         # Try to extract JSON from text response
         text = response.get("text", "")
         if text:
-            # Try regex-based JSON extraction
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            matches = re.findall(json_pattern, text)
-            if matches:
-                for match in matches:
-                    try:
-                        parsed = json.loads(match)
-                        if "decision" in parsed or "confidence" in parsed:
-                            logger.info(f"{self.name} agent: Extracted JSON with decision/confidence from text")
-                            return parsed
-                    except json.JSONDecodeError:
-                        continue
+            # Debug: log what we're trying to parse
+            logger.debug(f"{self.name} agent: Raw response length={len(text)}, first 400 chars: {text[:400]}")
+            
+            # Remove markdown code blocks if present
+            text_clean = re.sub(r'```json\s*', '', text)
+            text_clean = re.sub(r'```\s*', '', text_clean)
+            text_clean = text_clean.strip()
+            
+            logger.debug(f"{self.name} agent: After cleanup length={len(text_clean)}, first 400 chars: {text_clean[:400]}")
+            
+            # Try to find JSON by matching braces (handles nested structures)
+            # Collect ALL JSON objects and prioritize the most complete one
+            found_candidates = []
+            
+            for start_idx in range(len(text_clean)):
+                if text_clean[start_idx] == '{':
+                    # Try to extract from this position
+                    brace_count = 0
+                    for end_idx in range(start_idx, len(text_clean)):
+                        if text_clean[end_idx] == '{':
+                            brace_count += 1
+                        elif text_clean[end_idx] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                # Found matching closing brace
+                                json_candidate = text_clean[start_idx:end_idx + 1]
+                                try:
+                                    parsed = json.loads(json_candidate)
+                                    # Score this candidate - prefer ones with more decision-related fields
+                                    score = 0
+                                    if "decision" in parsed:
+                                        score += 10
+                                    if "credit_limit" in parsed:
+                                        score += 5
+                                    if "interest_rate" in parsed:
+                                        score += 5
+                                    if "confidence" in parsed:
+                                        score += 3
+                                    if "detailed_reasoning" in parsed:
+                                        score += 2
+                                    if "conditions" in parsed:
+                                        score += 5
+                                    if "compensating_factors_used" in parsed:
+                                        score += 5
+                                    
+                                    found_candidates.append((start_idx, score, parsed))
+                                    logger.debug(f"{self.name} agent: Found JSON at position {start_idx}, score={score}, keys: {list(parsed.keys())}")
+                                except json.JSONDecodeError as e:
+                                    logger.debug(f"{self.name} agent: JSON parse error at position {start_idx}: {str(e)[:100]}")
+                                break
+            
+            # Sort by score (highest first) and return the best match
+            if found_candidates:
+                found_candidates.sort(key=lambda x: x[1], reverse=True)
+                best_pos, best_score, best_parsed = found_candidates[0]
+                
+                logger.debug(f"{self.name} agent: Best candidate at position {best_pos} with score {best_score}")
+                
+                # FIRST CHECK: If this is a text_fallback wrapper, try to extract nested JSON from detailed_reasoning
+                if best_parsed.get("format") == "text_fallback" and "detailed_reasoning" in best_parsed:
+                    detailed_text = best_parsed["detailed_reasoning"]
+                    if isinstance(detailed_text, str) and "{" in detailed_text:
+                        logger.debug(f"{self.name} agent: Best candidate is text_fallback, attempting to extract nested JSON from detailed_reasoning")
+                        
+                        # Strip markdown code blocks from detailed_reasoning string
+                        detail_clean = re.sub(r'```json\s*', '', detailed_text)
+                        detail_clean = re.sub(r'```\s*', '', detail_clean).strip()
+                        
+                        # Try full JSON parse first
+                        for nested_start in range(len(detail_clean)):
+                            if detail_clean[nested_start] == '{':
+                                brace_count = 0
+                                for nested_end in range(nested_start, len(detail_clean)):
+                                    if detail_clean[nested_end] == '{':
+                                        brace_count += 1
+                                    elif detail_clean[nested_end] == '}':
+                                        brace_count -= 1
+                                        if brace_count == 0:
+                                            nested_json_str = detail_clean[nested_start:nested_end + 1]
+                                            try:
+                                                nested_parsed = json.loads(nested_json_str)
+                                                if "decision" in nested_parsed:
+                                                    logger.info(f"{self.name} agent: Extracted complete nested JSON with decision={nested_parsed.get('decision')}, confidence={nested_parsed.get('confidence')}")
+                                                    return nested_parsed
+                                            except json.JSONDecodeError:
+                                                pass
+                                            break
+                        
+                        # FALLBACK: JSON may be truncated - extract decision/confidence via regex
+                        decision_match = re.search(r'"decision"\s*:\s*"([^"]+)"', detail_clean)
+                        confidence_match = re.search(r'"confidence"\s*:\s*(\d+)', detail_clean)
+                        credit_limit_match = re.search(r'"credit_limit"\s*:\s*([\d.]+)', detail_clean)
+                        
+                        if decision_match:
+                            extracted = {
+                                "decision": decision_match.group(1).upper(),
+                                "confidence": int(confidence_match.group(1)) if confidence_match else 0,
+                                "credit_limit": float(credit_limit_match.group(1)) if credit_limit_match else None,
+                                "detailed_reasoning": detail_clean,
+                                "format": "regex_extracted"
+                            }
+                            logger.info(f"{self.name} agent: Extracted decision via regex from truncated JSON: decision={extracted['decision']}, confidence={extracted['confidence']}")
+                            return extracted
+                
+                # SECOND CHECK: If the best candidate has decision field, return it
+                if "decision" in best_parsed and best_score >= 10:
+                    logger.info(f"{self.name} agent: Successfully extracted JSON with decision={best_parsed.get('decision')}, confidence={best_parsed.get('confidence')} from text (position {best_pos}, score {best_score})")
+                    return best_parsed
+                
+                logger.warning(f"{self.name} agent: Best JSON candidate at position {best_pos} has score {best_score} but missing required fields or is text_fallback. All candidates: {[(c[1], list(c[2].keys())) for c in found_candidates[:5]]}")
+            else:
+                logger.warning(f"{self.name} agent: No valid JSON objects found in response")
+            
+            # LAST RESORT: Try regex extraction directly on cleaned text (handles truncated JSON)
+            decision_match = re.search(r'"decision"\s*:\s*"([^"]+)"', text_clean)
+            confidence_match = re.search(r'"confidence"\s*:\s*(\d+)', text_clean)
+            credit_limit_match = re.search(r'"credit_limit"\s*:\s*([\d.]+)', text_clean)
+            if decision_match:
+                extracted = {
+                    "decision": decision_match.group(1).upper(),
+                    "confidence": int(confidence_match.group(1)) if confidence_match else 0,
+                    "credit_limit": float(credit_limit_match.group(1)) if credit_limit_match else None,
+                    "detailed_reasoning": text_clean,
+                    "format": "regex_extracted"
+                }
+                logger.info(f"{self.name} agent: Extracted decision via regex from raw text: decision={extracted['decision']}, confidence={extracted['confidence']}")
+                return extracted
         
-        logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
+        logger.warning(f"{self.name} agent: Could not extract JSON properly, using fallback")
         return {
             "decision": "REFER",
             "confidence": 0,
@@ -262,7 +452,9 @@ class AuditAgent:
         """Audit the entire decision process"""
         logger.info(f"{self.name} agent: Starting audit process")
         
-        prompt = f"""As a CREDIT AUDIT & COMPLIANCE SPECIALIST, review this complete decision audit:
+        prompt = f"""{get_compliance_rules()}
+
+As a CREDIT AUDIT & COMPLIANCE SPECIALIST, conduct a comprehensive compliance audit:
 
 APPLICANT:
 {json.dumps(applicant, indent=2)}
@@ -276,7 +468,17 @@ RISK ASSESSMENT:
 FINAL DECISION:
 {json.dumps(final_decision, indent=2)}
 
-Provide comprehensive audit report in JSON with: audit_compliance_score (1-100), compliance_issues (list), regulatory_flags, recommendations, audit_trail_summary, decision_justification_strength."""
+AUDIT REQUIREMENTS:
+1. Verify all documentation requirements were met per compliance framework
+2. Check for fair lending compliance and disparate impact concerns
+3. Assess decision justification against policy criteria
+4. Verify regulatory notice requirements (if DENY or REFER)
+5. Validate audit trail completeness
+6. Confirm no prohibited factors influenced decision (protected characteristics)
+7. Review for consistency with regulatory guidelines (ECOA, TILA, Reg Z, Dodd-Frank)
+8. Identify strengths and gaps in documentation
+
+Provide comprehensive audit report in JSON with: audit_compliance_score (1-100), fair_lending_check_result (PASS/FLAG/FAIL), documentation_completeness, regulatory_compliance (ECOA/TILA/Dodd-Frank/Reg-Z assessment), compliance_issues (list with severity), regulatory_flags (list), missing_documentation, recommendations, audit_trail_summary, decision_justification_strength (Strong/Adequate/Weak), adverse_action_notice_required."""
 
         return self._invoke_llm(prompt)
     
@@ -297,18 +499,29 @@ Provide comprehensive audit report in JSON with: audit_compliance_score (1-100),
         # Try to extract JSON from text response
         text = response.get("text", "")
         if text:
-            # Try regex-based JSON extraction
-            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
-            matches = re.findall(json_pattern, text)
-            if matches:
-                for match in matches:
-                    try:
-                        parsed = json.loads(match)
-                        if "audit_compliance_score" in parsed:
-                            logger.info(f"{self.name} agent: Extracted JSON with audit_compliance_score from text")
-                            return parsed
-                    except json.JSONDecodeError:
-                        continue
+            # Remove markdown code blocks if present
+            text_clean = re.sub(r'```json\s*', '', text)
+            text_clean = re.sub(r'```\s*', '', text_clean)
+            
+            # Try to find JSON by matching braces (handles nested structures)
+            for start_idx in range(len(text_clean)):
+                if text_clean[start_idx] == '{':
+                    brace_count = 0
+                    for end_idx in range(start_idx, len(text_clean)):
+                        if text_clean[end_idx] == '{':
+                            brace_count += 1
+                        elif text_clean[end_idx] == '}':
+                            brace_count -= 1
+                            if brace_count == 0:
+                                json_candidate = text_clean[start_idx:end_idx + 1]
+                                try:
+                                    parsed = json.loads(json_candidate)
+                                    if "audit_compliance_score" in parsed:
+                                        logger.info(f"{self.name} agent: Extracted JSON with audit_compliance_score from text")
+                                        return parsed
+                                except json.JSONDecodeError:
+                                    pass
+                                break
         
         logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
         return {

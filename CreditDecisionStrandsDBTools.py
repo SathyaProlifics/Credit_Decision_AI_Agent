@@ -56,6 +56,13 @@ AWS_SECRET_NAME = "rds!db-96bdf2a6-c157-4fca-b8e7-412b79d52086"
 # Global Lambda client instance
 _lambda_client: Optional[LambdaAPIClient] = None
 
+# ---- Performance caches ----
+# Avoids hitting AWS Secrets Manager and re-reading resource/properties on every DB call
+_aws_secrets_cache: Optional[Dict] = None   # None = not tried yet; {} = tried and failed
+_aws_secrets_failed: bool = False            # True after first failure - skip retrying
+_resource_props_cache: Optional[Dict] = None # Cached resource/properties file content
+_db_config_cache: Optional[Dict] = None     # Fully resolved {host, user, password, db, port}
+
 
 def _get_lambda_client() -> Optional[LambdaAPIClient]:
     """Get or create Lambda API client if available."""
@@ -77,13 +84,22 @@ def _get_aws_secrets() -> Dict[str, str]:
     """Fetch RDS credentials from AWS Secrets Manager.
     
     Returns a dict with 'username' and 'password' keys, or empty dict if not available.
+    Caches the result so AWS is only contacted once per process lifetime.
     """
+    global _aws_secrets_cache, _aws_secrets_failed
+
+    # Return cached result after first attempt
+    if _aws_secrets_failed:
+        return {}  # Already failed once - don't retry
+    if _aws_secrets_cache is not None:
+        return _aws_secrets_cache  # Already succeeded - return cached
+
     if not boto3:
         logger.debug("boto3 not available, skipping AWS Secrets Manager")
+        _aws_secrets_failed = True
         return {}
     
     try:
-        # Get region from environment or default to us-east-1
         region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "us-east-1"
         logger.debug(f"Creating boto3 secretsmanager client for region: {region}")
         client = boto3.client('secretsmanager', region_name=region)
@@ -92,20 +108,24 @@ def _get_aws_secrets() -> Dict[str, str]:
         
         if 'SecretString' in response:
             secret = json.loads(response['SecretString'])
-            logger.info(f"Successfully retrieved secret from AWS Secrets Manager")
-            return {
+            logger.info("Successfully retrieved secret from AWS Secrets Manager")
+            _aws_secrets_cache = {
                 'username': secret.get('username'),
                 'password': secret.get('password')
             }
+            return _aws_secrets_cache
         else:
             logger.warning("Secret retrieved but no SecretString found")
+            _aws_secrets_failed = True
             return {}
     except ClientError as e:
         error_code = e.response['Error']['Code']
         logger.warning(f"Failed to retrieve secret from AWS Secrets Manager (error={error_code}): {e}")
+        _aws_secrets_failed = True
         return {}
     except Exception as e:
         logger.warning(f"Unexpected error fetching AWS secrets: {type(e).__name__}: {e}")
+        _aws_secrets_failed = True
         return {}
 
 
@@ -114,42 +134,49 @@ def _get_db_conn():
         logger.error("PyMySQL is not installed in the environment")
         raise RuntimeError("PyMySQL is not installed in the environment")
 
-    # Try loading DB settings from AWS Secrets Manager first, then resource/properties, then environment
-    logger.debug("Loading DB configuration...")
-    
-    # Try AWS Secrets Manager first
-    aws_creds = _get_aws_secrets()
-    user = aws_creds.get('username')
-    password = aws_creds.get('password')
-    
-    # Fall back to resource/properties and environment variables
-    props = _load_resource_properties()
-    if not user:
-        user = props.get("DB_USER") or os.getenv("DB_USER")
-    if not password:
-        password = props.get("DB_PASSWORD") or os.getenv("DB_PASSWORD")
+    global _db_config_cache
 
-    host = props.get("DB_HOST") or os.getenv("DB_HOST") or DEFAULT_HOST
-    db = props.get("DB_NAME") or os.getenv("DB_NAME") or "dev"
+    if _db_config_cache is None:
+        # First call: resolve and cache DB config
+        logger.debug("Loading DB configuration (first time, will cache)...")
+
+        aws_creds = _get_aws_secrets()
+        user = aws_creds.get('username')
+        password = aws_creds.get('password')
+
+        props = _load_resource_properties()
+        if not user:
+            user = props.get("DB_USER") or os.getenv("DB_USER")
+        if not password:
+            password = props.get("DB_PASSWORD") or os.getenv("DB_PASSWORD")
+
+        host = props.get("DB_HOST") or os.getenv("DB_HOST") or DEFAULT_HOST
+        db = props.get("DB_NAME") or os.getenv("DB_NAME") or "dev"
+        try:
+            port = int(props.get("DB_PORT") or os.getenv("DB_PORT") or "3306")
+        except ValueError:
+            port = 3306
+
+        if not user or not password:
+            logger.error("Database credentials not set: DB_USER or DB_PASSWORD missing")
+            raise RuntimeError("Database credentials not set. Please set credentials in AWS Secrets Manager, resource/properties, or environment variables.")
+
+        _db_config_cache = {"host": host, "user": user, "password": password, "db": db, "port": port}
+        logger.debug(f"DB Config cached: host={host}, user={user}, database={db}, port={port}")
+    else:
+        logger.debug("Using cached DB configuration")
+
+    cfg = _db_config_cache
     try:
-        port = int(props.get("DB_PORT") or os.getenv("DB_PORT") or "3306")
-    except ValueError:
-        logger.warning("Invalid DB_PORT value, defaulting to 3306")
-        port = 3306
-
-    logger.debug(f"DB Config: host={host}, user={user}, database={db}, port={port}")
-
-    if not user or not password:
-        logger.error("Database credentials not set: DB_USER or DB_PASSWORD missing")
-        logger.error(f"  user={user}, password_set={bool(password)}")
-        raise RuntimeError("Database credentials not set. Please set credentials in AWS Secrets Manager, resource/properties, or environment variables.")
-
-    try:
-        logger.info(f"Attempting database connection to {db}@{host}:{port}")
+        logger.info(f"Attempting database connection to {cfg['db']}@{cfg['host']}:{cfg['port']}")
         start_time = time.time()
-        conn = pymysql.connect(host=host, user=user, password=password, database=db, port=port, cursorclass=pymysql.cursors.DictCursor)
+        conn = pymysql.connect(
+            host=cfg['host'], user=cfg['user'], password=cfg['password'],
+            database=cfg['db'], port=cfg['port'],
+            cursorclass=pymysql.cursors.DictCursor
+        )
         elapsed = time.time() - start_time
-        logger.info(f"Successfully connected to database {db} at {host}:{port} (took {elapsed:.2f}s)")
+        logger.info(f"Successfully connected to database {cfg['db']} at {cfg['host']}:{cfg['port']} (took {elapsed:.2f}s)")
         return conn
     except pymysql.MySQLError as e:
         logger.error(f"MySQL connection error: {type(e).__name__}: {e}", exc_info=True)
@@ -163,7 +190,12 @@ def _load_resource_properties() -> Dict[str, str]:
     """Load key=value pairs from resource/properties (if present).
 
     Returns a dict of properties. Keys and values are returned as strings.
+    Cached after first read so the file is only opened once per process.
     """
+    global _resource_props_cache
+    if _resource_props_cache is not None:
+        return _resource_props_cache
+
     props_path = os.path.join(os.path.dirname(__file__), "resource", "properties")
     result: Dict[str, str] = {}
     try:
@@ -182,6 +214,7 @@ def _load_resource_properties() -> Dict[str, str]:
             logger.debug(f"resource/properties file not found at {props_path}, will use environment variables")
     except Exception as e:
         logger.warning(f"Failed to read {props_path}: {e}. Will fall back to environment variables.")
+    _resource_props_cache = result
     return result
 
 

@@ -1,0 +1,14 @@
+# Secret values – never commit
+terraform.tfvars
+*.tfvars
+!*.tfvars.example
+
+# Terraform state – contains plain-text credentials
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+.terraform.tfstate.lock.info
+
+# Terraform working directory
+.terraform/
+.terraform.lock.hcl
