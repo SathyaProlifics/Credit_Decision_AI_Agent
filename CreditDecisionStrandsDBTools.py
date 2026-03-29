@@ -406,12 +406,12 @@ def update_application_status(application_id: int, status: str, reason: Optional
             additions = []
             
             if reason is not None:
-                parts.append("decision_reason=%s")
+                parts.append("reason=%s")
                 values.append(reason)
                 additions.append("reason")
             
             if confidence is not None:
-                parts.append("decision_confidence=%s")
+                parts.append("confidence=%s")
                 values.append(confidence)
                 additions.append(f"confidence={confidence}")
             

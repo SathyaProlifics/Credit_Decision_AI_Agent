@@ -26,7 +26,7 @@ from CreditDecisionStrandsDBTools import (
 
 def make_agent() -> Agent:
     """Construct a Strands Agent with multi-agent orchestration capability"""
-    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+    model_id = "us.anthropic.claude-sonnet-4-6"
     agent = Agent(
         model=BedrockModel(model_id=model_id),
         system_prompt="""You are an autonomous multi-agent credit decisioning system orchestrator.

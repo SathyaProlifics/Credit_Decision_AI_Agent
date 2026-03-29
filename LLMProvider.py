@@ -69,7 +69,34 @@ class BedrockProvider(LLMProvider):
         
         try:
             region = config.region or os.getenv("AWS_REGION", "us-east-1")
-            client = boto3.client("bedrock-runtime", region_name=region)
+            
+            # Check if Bedrock API key is provided
+            bedrock_api_key = os.getenv("BEDROCK_API_KEY")
+            
+            # Create boto3 client with optional credentials
+            if bedrock_api_key:
+                logger.debug("BedrockProvider: Using configured Bedrock API key")
+                # Try to parse the API key - it might be base64 encoded
+                try:
+                    import base64
+                    decoded_key = base64.b64decode(bedrock_api_key).decode('utf-8')
+                    # Format: ACCESS_KEY:SECRET_KEY
+                    if ':' in decoded_key:
+                        access_key, secret_key = decoded_key.split(':', 1)
+                        client = boto3.client(
+                            "bedrock-runtime",
+                            region_name=region,
+                            aws_access_key_id=access_key,
+                            aws_secret_access_key=secret_key
+                        )
+                    else:
+                        logger.warning("BedrockProvider: Invalid API key format, using default boto3 credentials")
+                        client = boto3.client("bedrock-runtime", region_name=region)
+                except Exception as e:
+                    logger.warning(f"BedrockProvider: Could not decode API key: {e}, using default boto3 credentials")
+                    client = boto3.client("bedrock-runtime", region_name=region)
+            else:
+                client = boto3.client("bedrock-runtime", region_name=region)
             
             body = json.dumps({
                 "anthropic_version": "bedrock-2023-05-31",
@@ -389,7 +416,7 @@ class ModelConfigManager:
         model_id = os.getenv(model_id_key)
         if not model_id:
             logger.warning(f"Model ID not configured for {agent_name}, using default")
-            model_id = "anthropic.claude-3-sonnet-20240229-v1:0"  # Default fallback
+            model_id = "us.anthropic.claude-sonnet-4-6"  # Default fallback
         
         # Get provider
         provider_key = f"{self.env_prefix}{agent_lower}_PROVIDER"

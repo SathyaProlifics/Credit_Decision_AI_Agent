@@ -1,5 +1,6 @@
 import os
 import json
+import re
 import boto3
 import logging
 import time
@@ -90,9 +91,29 @@ Provide analysis in JSON with: data_completeness_score, quality_assessment, key_
             logger.info(f"{self.name} agent: Successfully parsed JSON response")
             return response["parsed_json"]
         
-        # Otherwise return the text field
-        logger.info(f"{self.name} agent: Returning text response")
-        return {"analysis": response.get("text", ""), "format": "text"}
+        # Try to extract JSON from text response
+        text = response.get("text", "")
+        if text:
+            # Try regex-based JSON extraction
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, text)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if "data_completeness_score" in parsed or "quality_assessment" in parsed:
+                            logger.info(f"{self.name} agent: Extracted JSON with collection data from text")
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
+        return {
+            "data_completeness_score": 0,
+            "quality_assessment": "insufficient",
+            "profile_summary": response.get("text", "No response"),
+            "format": "text_fallback"
+        }
 
 
 class RiskAssessorAgent:
@@ -134,8 +155,30 @@ Provide risk assessment in JSON with: overall_risk_score (1-100), risk_category 
             logger.info(f"{self.name} AGENT: Successfully parsed JSON (total time={total_elapsed:.2f}s)")
             return response["parsed_json"]
         
-        logger.info(f"{self.name} AGENT: Returning text response (total time={total_elapsed:.2f}s)")
-        return {"analysis": response.get("text", ""), "format": "text", "agent": self.name}
+        # Try to extract JSON from text response
+        text = response.get("text", "")
+        if text:
+            # Try regex-based JSON extraction
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, text)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if "overall_risk_score" in parsed or "risk_category" in parsed:
+                            logger.info(f"{self.name} AGENT: Extracted JSON with risk data from text (total time={total_elapsed:.2f}s)")
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.warning(f"{self.name} AGENT: Could not extract JSON, using fallback (total time={total_elapsed:.2f}s)")
+        return {
+            "overall_risk_score": 50,
+            "risk_category": "Medium",
+            "key_risk_factors": [response.get("text", "No response")],
+            "format": "text_fallback",
+            "agent": self.name
+        }
 
 
 class DecisionMakerAgent:
@@ -181,8 +224,29 @@ Respond with ONLY a JSON object with keys: decision, credit_limit, interest_rate
             logger.info(f"{self.name} agent: Successfully parsed decision response")
             return response["parsed_json"]
         
-        logger.info(f"{self.name} agent: Returning text response")
-        return {"analysis": response.get("text", ""), "format": "text"}
+        # Try to extract JSON from text response
+        text = response.get("text", "")
+        if text:
+            # Try regex-based JSON extraction
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, text)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if "decision" in parsed or "confidence" in parsed:
+                            logger.info(f"{self.name} agent: Extracted JSON with decision/confidence from text")
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
+        return {
+            "decision": "REFER",
+            "confidence": 0,
+            "detailed_reasoning": response.get("text", "No response"),
+            "format": "text_fallback"
+        }
 
 
 class AuditAgent:
@@ -230,8 +294,29 @@ Provide comprehensive audit report in JSON with: audit_compliance_score (1-100),
             logger.info(f"{self.name} agent: Successfully parsed audit report")
             return response["parsed_json"]
         
-        logger.info(f"{self.name} agent: Returning text response")
-        return {"analysis": response.get("text", ""), "format": "text"}
+        # Try to extract JSON from text response
+        text = response.get("text", "")
+        if text:
+            # Try regex-based JSON extraction
+            json_pattern = r'\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}'
+            matches = re.findall(json_pattern, text)
+            if matches:
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        if "audit_compliance_score" in parsed:
+                            logger.info(f"{self.name} agent: Extracted JSON with audit_compliance_score from text")
+                            return parsed
+                    except json.JSONDecodeError:
+                        continue
+        
+        logger.warning(f"{self.name} agent: Could not extract JSON, using fallback")
+        return {
+            "audit_compliance_score": 0,
+            "compliance_issues": [],
+            "audit_trail_summary": response.get("text", "No response"),
+            "format": "text_fallback"
+        }
 
 
 class OrchestratorAgent:
@@ -417,7 +502,7 @@ def run_credit_decision(application_id: int) -> str:
 
 def make_agent() -> Agent:
     """Construct a Strands Agent (single-agent interface for backward compatibility)"""
-    model_id = "anthropic.claude-3-sonnet-20240229-v1:0"
+    model_id = "us.anthropic.claude-sonnet-4-6"
     agent = Agent(
         model=BedrockModel(model_id=model_id),
         system_prompt="You are an autonomous multi-agent credit decisioning system orchestrator. Your sub-agents handle data collection, risk assessment, decision making, and auditing.",
