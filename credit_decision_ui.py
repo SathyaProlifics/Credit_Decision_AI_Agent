@@ -95,6 +95,13 @@ col1, col2 = st.columns([0.8, 0.2])
 with col1:
     st.title("🤖 OrchestrateAI Credit Decision Agent")
     st.markdown("*Multi-agent AI system powered by AWS Bedrock*")
+with col2:
+    st.markdown("""
+<div style='text-align: right; padding: 10px;'>
+    <span style='font-size: 1.1em;'>👋 Welcome, <strong>Anantha</strong>!</span><br>
+    <span style='color: #35B8FF; font-size: 0.85em;'>AI-Powered Credit Analysis</span>
+</div>
+""", unsafe_allow_html=True)
 
 
 # ==================== LEFT PANE: SIDEBAR FORM ====================
@@ -433,7 +440,12 @@ if submitted:
                         logger.debug(f"UI: Updated application_status for app_id={app_id}")
                         update_application_agent_output(app_id, result)
                         logger.debug(f"UI: Updated application_agent_output for app_id={app_id}")
-                        st.text(f"Saved application id: {app_id}")
+                        st.markdown(
+                            f"<div style='background-color:#d4edda; color:#155724; padding:10px; border-radius:6px; margin-top:8px;'>"
+                            f"💾 <strong>Application saved successfully!</strong> &nbsp;&nbsp; ID: <code>{app_id}</code>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
                         logger.info(f"UI: Successfully saved final application data for app_id={app_id}")
                 except Exception as db_err:
                     logger.exception(f"UI: Failed to update DB after processing (app_id={app_id}): {db_err}")
@@ -445,7 +457,17 @@ if submitted:
 
 else:
     # Welcome message when no submission
-    st.info("👈 Fill out the form in the sidebar and click 'Process' to get started!")
+    st.markdown("""
+<div style='background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            border-radius: 12px; padding: 28px 32px; margin-bottom: 20px;
+            border-left: 5px solid #35B8FF;'>
+    <h2 style='color: #35B8FF; margin: 0 0 6px 0;'>👋 Welcome, Anantha!</h2>
+    <p style='color: #ccc; margin: 0; font-size: 1.05em;'>
+        Your AI-powered credit decisioning system is ready.<br>
+        Fill out the applicant form on the left and click <strong style='color:#35B8FF;'>🚀 Process</strong> to begin.
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
     st.header("🔍 OrchestrateAI Credit Decision System")
     st.markdown("""
