@@ -1,9 +1,10 @@
 # Environment variables and secrets
-.env
+#.env
 .env.local
 .env.production
 secrets.json
 .aws/
+resource/properties
 
 # Python
 __pycache__/
