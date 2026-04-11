@@ -18,7 +18,10 @@ if env_file.exists():
                 key, value = line.split('=', 1)
                 os.environ[key.strip()] = value.strip()
 
-from CreditDecisionAgent import make_agent, run_credit_decision
+from CreditDecisionAgent_MCP import MCPDatabaseClient, MCPOrchestratorAgent
+
+# MCP server URL (default: SSE on localhost:8080)
+MCP_URL = os.getenv("MCP_URL", "http://127.0.0.1:8080/sse")
 
 # Logging: file logger for UI runs (path configurable via CREDIT_DECISION_LOG)
 LOG_FILE = os.getenv("CREDIT_DECISION_LOG", "credit_decision.log")
@@ -39,15 +42,14 @@ file_handler.setLevel(logging.DEBUG)
 file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
 logger.addHandler(file_handler)
 
-# DB tools (Strands wrappers) for persisting and querying applications
-from CreditDecisionStrandsDBTools import (
-    insert_application,
-    update_application_status,
-    update_application_agent_output,
-    list_applications,
-    get_application,
-    find_latest_by_applicant,
-)
+# DB operations via MCP server (cached client per Streamlit session)
+def _get_mcp_db() -> MCPDatabaseClient:
+    """Get or create a shared MCPDatabaseClient for this Streamlit session."""
+    if "mcp_db" not in st.session_state:
+        logger.info(f"UI: Connecting to MCP server at {MCP_URL}")
+        st.session_state.mcp_db = MCPDatabaseClient(MCP_URL)
+        logger.info("UI: MCP client connected")
+    return st.session_state.mcp_db
 
 # Page configuration following OrchestrateAI guidelines
 st.set_page_config(
@@ -132,8 +134,9 @@ with st.sidebar.form("applicant_form"):
 st.sidebar.divider()
 st.sidebar.subheader("📊 Quick Stats")
 try:
-    logger.debug("UI: Fetching quick stats from list_applications()")
-    all_apps = list_applications()
+    mcp_db = _get_mcp_db()
+    logger.debug("UI: Fetching quick stats from MCP list_applications()")
+    all_apps = mcp_db.list_applications()
     logger.debug(f"UI: list_applications returned response of length {len(all_apps) if isinstance(all_apps, str) else 'N/A'}")
     if all_apps:
         apps_list = json.loads(all_apps) if isinstance(all_apps, str) else all_apps
@@ -187,9 +190,10 @@ if submitted:
     
     with st.spinner("🤖 Processing application through AI agents..."):
         try:
-            # persist initial application record
-            logger.debug(f"UI: Inserting application record for {name} into database")
-            insert_resp = insert_application(applicant_data)
+            # persist initial application record via MCP
+            mcp_db = _get_mcp_db()
+            logger.debug(f"UI: Inserting application record for {name} via MCP server")
+            insert_resp = mcp_db.insert_application(applicant_data)
             logger.debug(f"UI: insert_application response received, parsing...")
             try:
                 insert_obj = json.loads(insert_resp)
@@ -212,27 +216,27 @@ if submitted:
                 logger.error(f"UI: Failed to get application ID from insert response - aborting")
                 st.error("Failed to save application to database")
 
-            # Initialize agent and run orchestration
-            agent = None
+            # Initialize MCP-backed orchestrator
+            orchestrator = None
             try:
-                logger.info(f"UI: Initializing Strands agent for app_id={app_id}")
-                agent = make_agent()
-                logger.debug(f"UI: Agent initialized successfully")
+                logger.info(f"UI: Initializing MCP orchestrator for app_id={app_id}")
+                orchestrator = MCPOrchestratorAgent(mcp_db)
+                logger.debug(f"UI: MCP orchestrator initialized successfully")
             except Exception as e:
-                logger.exception(f"UI: make_agent() failed: {e}")
+                logger.exception(f"UI: MCPOrchestratorAgent init failed: {e}")
 
             result = None
             if app_id:
-                # Run in background thread
-                def _agent_worker(aid: int):
+                # Run MCP orchestrator in background thread
+                def _agent_worker(aid: int, orch: MCPOrchestratorAgent):
                     try:
-                        logger.info(f"UI: Background agent worker started for app_id={aid}")
-                        run_credit_decision(aid)
-                        logger.info(f"UI: Background agent worker finished for app_id={aid}")
+                        logger.info(f"UI: Background MCP agent worker started for app_id={aid}")
+                        orch.process_application(aid)
+                        logger.info(f"UI: Background MCP agent worker finished for app_id={aid}")
                     except Exception:
-                        logger.exception(f"UI: Background agent worker error for app_id={aid}")
+                        logger.exception(f"UI: Background MCP agent worker error for app_id={aid}")
 
-                t = threading.Thread(target=_agent_worker, args=(app_id,), daemon=True)
+                t = threading.Thread(target=_agent_worker, args=(app_id, orchestrator), daemon=True)
                 t.start()
                 logger.debug(f"UI: Background thread started for app_id={app_id}")
 
@@ -277,7 +281,7 @@ if submitted:
                     poll_count += 1
                     logger.debug(f"UI: Polling database (attempt {poll_count}) for app_id={app_id}")
                     try:
-                        raw_app = get_application(app_id)
+                        raw_app = mcp_db.get_application(app_id)
                         logger.debug(f"UI: Raw app response length: {len(raw_app) if isinstance(raw_app, str) else 'N/A'}")
                         appobj = json.loads(raw_app) if isinstance(raw_app, str) else raw_app
                         agent_out = appobj.get("agent_output")
@@ -423,15 +427,15 @@ if submitted:
                         st.markdown(f"**Status:** {proc_status or 'unknown'}")
                         st.json(result)
 
-                # Update database
+                # Update database via MCP
                 try:
                     if app_id and final_decision:
                         decision = final_decision.get("decision") or "UNKNOWN"
                         confidence = final_decision.get("confidence")
                         logger.debug(f"UI: Final decision={decision}, confidence={confidence} for app_id={app_id}")
-                        update_application_status(app_id, decision, reason=final_decision.get("reason"), confidence=confidence)
+                        mcp_db.update_application_status(app_id, decision, reason=final_decision.get("reason"), confidence=confidence)
                         logger.debug(f"UI: Updated application_status for app_id={app_id}")
-                        update_application_agent_output(app_id, result)
+                        mcp_db.update_application_agent_output(app_id, result)
                         logger.debug(f"UI: Updated application_agent_output for app_id={app_id}")
                         st.text(f"Saved application id: {app_id}")
                         logger.info(f"UI: Successfully saved final application data for app_id={app_id}")
@@ -468,7 +472,7 @@ else:
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #35B8FF;'>
-    <strong>Powered by OrchestrateAI</strong><br>
+    <strong>OrchestrateAI</strong><br>
     Multi-Agent Credit Decision System | AWS Bedrock & Anthropic Claude
 </div>
 """, unsafe_allow_html=True)

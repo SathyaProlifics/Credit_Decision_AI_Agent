@@ -24,6 +24,35 @@ logger = logging.getLogger("llm_provider")
 logger.setLevel(logging.DEBUG)
 
 
+def _load_env_from_properties():
+    """Load key=value pairs from resource/properties into os.environ.
+
+    Only sets variables that are NOT already set in the environment,
+    so explicit env vars or CLI overrides always take priority.
+    """
+    props_path = os.path.join(os.path.dirname(__file__), "resource", "properties")
+    if not os.path.exists(props_path):
+        return
+    try:
+        with open(props_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    k, v = k.strip(), v.strip()
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+                        logger.debug(f"Loaded {k} from resource/properties")
+    except Exception as e:
+        logger.warning(f"Failed to load resource/properties into env: {e}")
+
+
+# Load properties into environment at import time
+_load_env_from_properties()
+
+
 @dataclass
 class ModelConfig:
     """Configuration for an LLM model"""

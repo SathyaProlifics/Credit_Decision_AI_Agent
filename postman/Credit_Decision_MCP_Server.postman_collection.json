@@ -1,0 +1,288 @@
+{
+  "info": {
+    "name": "Credit Decision MCP Server",
+    "description": "MCP Server endpoints for Credit Decision DB operations.\n\nWorkflow:\n1. Open SSE connection (GET /sse) to get session_id\n2. Use session_id in POST /messages/ requests\n3. Responses arrive on the SSE stream",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8080",
+      "type": "string"
+    },
+    {
+      "key": "session_id",
+      "value": "",
+      "type": "string",
+      "description": "Get this from the SSE /sse endpoint response"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Connect SSE",
+      "item": [
+        {
+          "name": "Open SSE Connection",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/sse",
+              "host": ["{{base_url}}"],
+              "path": ["sse"]
+            },
+            "description": "Opens an SSE event stream. The first event returns the session_id needed for all subsequent requests.\n\nResponse format:\n```\nevent: endpoint\ndata: /messages/?session_id=<UUID>\n```\n\nCopy the session_id value and set it in the collection variable."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "2. Discovery",
+      "item": [
+        {
+          "name": "List Tools",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Lists all available MCP tools with their schemas."
+          },
+          "response": []
+        },
+        {
+          "name": "Initialize",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 0,\n  \"method\": \"initialize\",\n  \"params\": {\n    \"protocolVersion\": \"2024-11-05\",\n    \"capabilities\": {},\n    \"clientInfo\": {\n      \"name\": \"Postman\",\n      \"version\": \"1.0.0\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Initialize the MCP session. Call this first after connecting SSE."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "3. Read Operations",
+      "item": [
+        {
+          "name": "Get Application by ID",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"get_application\",\n    \"arguments\": {\n      \"application_id\": 26\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Fetch a single credit application by its numeric ID."
+          },
+          "response": []
+        },
+        {
+          "name": "List Applications",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 3,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"list_applications\",\n    \"arguments\": {\n      \"limit\": 5\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "List the most recent credit applications (newest first)."
+          },
+          "response": []
+        },
+        {
+          "name": "Find Latest by Applicant Name",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"find_latest_by_applicant\",\n    \"arguments\": {\n      \"applicant_name\": \"John Smith\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Find the most recent application for a given applicant name (case-insensitive)."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "4. Write Operations",
+      "item": [
+        {
+          "name": "Insert Application",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 5,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"insert_application\",\n    \"arguments\": {\n      \"applicant_name\": \"Jane Doe\",\n      \"age\": 30,\n      \"email\": \"jane.doe@email.com\",\n      \"income\": 85000,\n      \"employment_status\": \"Full-time\",\n      \"credit_score\": 750,\n      \"dti_ratio\": 0.28,\n      \"existing_debts\": 15000,\n      \"requested_credit\": 20000,\n      \"source\": \"postman\",\n      \"application_status\": \"PENDING\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Insert a new credit application into the database."
+          },
+          "response": []
+        },
+        {
+          "name": "Update Application Status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"update_application_status\",\n    \"arguments\": {\n      \"application_id\": 26,\n      \"status\": \"APPROVED\",\n      \"reason\": \"Manual approval after review\",\n      \"confidence\": 95\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Update the status, reason, and confidence score for a credit application.\n\nValid statuses: PENDING, PROCESSING, APPROVED, DENIED, REFER, ERROR"
+          },
+          "response": []
+        },
+        {
+          "name": "Update Agent Output",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 7,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"update_application_agent_output\",\n    \"arguments\": {\n      \"application_id\": 26,\n      \"agent_output\": \"{\\\"processing_status\\\": \\\"completed\\\", \\\"decision\\\": \\\"APPROVED\\\", \\\"confidence\\\": 95}\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/messages/?session_id={{session_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["messages", ""],
+              "query": [
+                {
+                  "key": "session_id",
+                  "value": "{{session_id}}"
+                }
+              ]
+            },
+            "description": "Update the agent_output JSON column for a credit application. Used to store the full AI agent pipeline output."
+          },
+          "response": []
+        }
+      ]
+    }
+  ]
+}

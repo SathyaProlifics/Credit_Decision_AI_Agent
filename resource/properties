@@ -1,8 +1,0 @@
-DB_HOST=sathya-database.cna0omeka1mf.us-east-1.rds.amazonaws.com
-DB_PORT=3306
-DB_USER=admin
-DB_PASSWORD=DkI2f0LpNU?(RE?-~4GJNp!<G4Ev
-DB_NAME=dev
-
-# Copy this file to `resource/properties` and fill in real values.
-# Keep this file out of version control if it contains secrets.
